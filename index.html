@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Second Motion AR</title>
+  <style>
+    :root { --bg: #000; --fg: #fff; --pill: rgba(0,0,0,.6); --ok: #3ddc84; --warn: #ffb020; --err: #ff5a5a; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
+      font: 15px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-user-select: none; user-select: none; }
+    #ar { position: fixed; inset: 0; }
+    #status { position: fixed; left: 50%; transform: translateX(-50%); top: max(16px, env(safe-area-inset-top));
+      background: var(--pill); padding: 8px 14px; border-radius: 999px; display: flex; gap: 8px; align-items: center;
+      z-index: 10; white-space: nowrap; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+    #dot { width: 10px; height: 10px; border-radius: 50%; background: var(--warn); }
+    #dot.ok { background: var(--ok); } #dot.err { background: var(--err); }
+    #debugBtn { position: fixed; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); z-index: 10;
+      background: var(--pill); color: var(--fg); border: 0; border-radius: 999px; padding: 10px 14px; font: inherit; }
+    #debug { position: fixed; left: 16px; right: 16px; bottom: calc(max(16px, env(safe-area-inset-bottom)) + 52px); z-index: 10;
+      background: rgba(0,0,0,.75); border-radius: 14px; padding: 12px 14px; display: none; font-size: 13px; }
+    #debug.open { display: block; }
+    #debug label { display: grid; grid-template-columns: 70px 1fr 52px; align-items: center; gap: 8px; margin: 6px 0; }
+    #debug input[type=range] { width: 100%; }
+    #log { max-height: 90px; overflow: auto; font-family: ui-monospace, Menlo, monospace; font-size: 11px; opacity: .8; margin-top: 8px; white-space: pre-wrap; }
+    #tap { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 20; background: rgba(0,0,0,.5); }
+    #tap button { font: inherit; font-size: 17px; padding: 14px 22px; border-radius: 999px; border: 0; background: #fff; color: #000; }
+    /* MindAR's own scanning / loading overlays — we draw our own status instead */
+    .mindar-ui-overlay { display: none !important; }
+    /* Browser-only start + help screens (the app has its own native landing screen) */
+    .screen { position: fixed; inset: 0; z-index: 30; display: none; flex-direction: column; justify-content: space-between;
+      background: #0b0b0c; padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom)); box-sizing: border-box; }
+    .screen.show { display: flex; }
+    .screen .body { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 14px; max-width: 520px; }
+    .kicker { color: #ff6b5a; font-size: 13px; letter-spacing: 2px; font-weight: 600; }
+    .screen h1 { margin: 0; font-size: 32px; line-height: 1.18; }
+    .screen p { margin: 0; color: #b8b8bd; font-size: 17px; line-height: 1.45; }
+    .screen .note { color: #ffb020; font-size: 15px; }
+    .btn { font: inherit; font-size: 17px; font-weight: 600; padding: 16px; border-radius: 999px; border: 0; background: #fff; color: #000; width: 100%; max-width: 520px; }
+    .btn.secondary { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.35); margin-top: 10px; }
+    .hidden { display: none !important; }
+  </style>
+  <script type="importmap">
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+      "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+    } }
+  </script>
+</head>
+<body>
+  <div id="ar"></div>
+  <div id="status"><span id="dot"></span><span id="msg">Loading…</span></div>
+  <button id="debugBtn">Debug</button>
+  <div id="debug">
+    <div id="stats">fps – · tracking –</div>
+    <label>Scale <input id="s" type="range" min="0.5" max="2.5" step="0.01" /><span id="sv"></span></label>
+    <label>Offset X <input id="x" type="range" min="-0.5" max="0.5" step="0.005" /><span id="xv"></span></label>
+    <label>Offset Y <input id="y" type="range" min="-0.5" max="0.5" step="0.005" /><span id="yv"></span></label>
+    <label>Opacity <input id="o" type="range" min="0" max="1" step="0.05" /><span id="ov"></span></label>
+    <div id="log"></div>
+  </div>
+  <section id="start" class="screen">
+    <div class="body">
+      <div class="kicker">SECOND MOTION</div>
+      <h1>Find an image on the sculpture</h1>
+      <p>Point your camera at one of the drawings and its animation will play on top of it.</p>
+      <p class="note hidden" id="inAppNote">You're in an in-app browser, and the camera may not work here. If it doesn't, open this page in Safari (iPhone) or Chrome (Android).</p>
+    </div>
+    <button class="btn" id="startBtn">Start</button>
+  </section>
+  <section id="help" class="screen">
+    <div class="body">
+      <div class="kicker">CAMERA NEEDED</div>
+      <h1 id="helpTitle">Camera access is off</h1>
+      <p id="helpText"></p>
+    </div>
+    <div>
+      <button class="btn" id="retryBtn">Try again</button>
+      <button class="btn secondary" id="copyBtn">Copy link</button>
+    </div>
+  </section>
+  <div id="tap"><button id="tapBtn">Tap to start</button></div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { MindARThree } from 'mindar-image-three';
+
+    // The artworks on the sculpture. `target` = the drawing's index in targets.mind (compiled in this order).
+    // Overlay placement is in "target widths": the tracked image is 1 unit wide, centred at (0,0).
+    // Tune live with the Debug panel (edits the artwork in view), or for testing via ?scale=&x=&y=&opacity=&fade=
+    // (applies to every artwork).
+    const ARTWORKS = [
+      // Video frame fitted to the tile, slightly smaller than it (as in the reference recording).
+      { target: 0, name: 'Communication101-7-Girl', video: 'girl.mp4', scale: 0.92, x: 0, y: 0 },
+      // Animation is drawn on the same framing as the tile photo, so it lines up 1:1.
+      { target: 1, name: 'Communication101-12-FreeArt', video: 'freeart.mp4', scale: 1.0, x: 0, y: 0 },
+      // These three are also drawn on their tile photo's own framing.
+      { target: 2, name: 'Communication101-10-Oops', video: 'oops.mp4', scale: 1.0, x: 0, y: 0 },
+      { target: 3, name: 'Communication101-11-Hand', video: 'hand.mp4', scale: 1.0, x: 0, y: 0 },
+      // Dress's tile is mostly plain grey, too little detail to detect reliably, so its target is compiled from
+      // a 560-px crop around the dress (x 220-780, y 240-800 of the 1000-px photo). The video still covers the
+      // whole tile: 1000/560 = 1.786 target widths, nudged up by (520-500)/560 = 0.036 to the tile's centre.
+      { target: 4, name: 'Communication101-13-Dress', video: 'dress.mp4', scale: 1.786, x: 0, y: 0.036 },
+      { target: 5, name: 'Communication101-2-Wonder', video: 'wonder.mp4', scale: 1.0, x: 0, y: 0 },
+      { target: 6, name: 'Communication101-3-Ovary', video: 'ovary.mp4', scale: 1.0, x: 0, y: 0 },   // portrait
+      { target: 7, name: 'Communication101-8-Stamp', video: 'stamp.mp4', scale: 1.0, x: 0, y: 0 },
+      { target: 8, name: 'Communication101-9-Hills', video: 'hills.mp4', scale: 1.0, x: 0, y: 0 },
+      { target: 9, name: 'Communication101-14-TinMan', video: 'tinman.mp4', scale: 1.0, x: 0, y: 0 },
+      { target: 10, name: 'Communication101-17-Crown', video: 'crown.mp4', scale: 1.0, x: 0, y: 0 },
+    ];
+    const params = new URLSearchParams(location.search);
+    const num = (k, d) => (params.has(k) ? parseFloat(params.get(k)) : d);
+    for (const a of ARTWORKS) Object.assign(a, { scale: num('scale', a.scale), x: num('x', a.x), y: num('y', a.y), opacity: num('opacity', 1) });
+    const FADE_MS = num('fade', 600);   // fade-in each time a drawing is (re)found
+    // Front-facing snap. Pose estimates wobble by a few degrees, so a drawing seen head-on looks slightly skewed.
+    // Below SNAP_IN degrees of tilt the animation is drawn perfectly square (only the phone's roll is kept);
+    // between SNAP_IN and SNAP_OUT it blends to the tracked angle; above SNAP_OUT it follows the drawing fully.
+    // When a drawing is first found, the animation starts square and eases into the tracked angle over SETTLE_MS.
+    const SNAP_IN = num('snapIn', 10), SNAP_OUT = num('snapOut', 25), SETTLE_MS = num('settle', 800);
+
+    const $ = (id) => document.getElementById(id);
+    const inApp = !!window.ReactNativeWebView;
+    const post = (type, data = {}) => { try { window.ReactNativeWebView?.postMessage(JSON.stringify({ type, ...data })); } catch {} };
+    const log = (m) => { const t = new Date().toLocaleTimeString(); $('log').textContent = `${t} ${m}\n` + $('log').textContent; post('log', { message: m }); console.log(m); };
+    const debugMode = inApp || params.has('debug');
+    if (!debugMode) $('debugBtn').classList.add('hidden');
+    const setStatus = (text, state = '') => { $('msg').textContent = text; $('dot').className = state; post('status', { text, state }); };
+    window.addEventListener('error', (e) => log('error: ' + e.message));
+    window.addEventListener('unhandledrejection', (e) => log('error (async): ' + (e.reason?.message || e.reason)));
+
+    // Debug panel
+    $('debugBtn').onclick = () => $('debug').classList.toggle('open');
+    let active = ARTWORKS[0];   // the artwork in view (or last seen): what the Debug sliders edit
+    const SLIDERS = [['scale', 's'], ['x', 'x'], ['y', 'y'], ['opacity', 'o']];
+    function syncSliders() { for (const [key, id] of SLIDERS) { $(id).value = active[key]; $(id + 'v').textContent = active[key]; } }
+    for (const [key, id] of SLIDERS) $(id).oninput = () => { active[key] = parseFloat($(id).value); $(id + 'v').textContent = $(id).value; applyOverlay(active); };
+    syncSliders();
+
+    // One hidden <video> per artwork.
+    for (const a of ARTWORKS) {
+      const v = document.createElement('video');
+      // No src yet: each video downloads only when its drawing is first found (see loadVideo).
+      Object.assign(v, { muted: true, loop: true, playsInline: true, preload: 'none', crossOrigin: 'anonymous' });
+      v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', ''); v.style.display = 'none';
+      v.addEventListener('loadeddata', () => { log(`${a.video} ready ${v.videoWidth}x${v.videoHeight}`); applyOverlay(a); });
+      // A video that was unloaded to save memory picks up where it left off.
+      v.addEventListener('loadedmetadata', () => { if (a.resumeAt && v.duration) v.currentTime = a.resumeAt % v.duration; a.resumeAt = 0; });
+      v.addEventListener('error', () => log(`${a.video} failed to load`));
+      document.body.appendChild(v);
+      Object.assign(a, { el: v, tracking: false, foundAt: 0 });
+    }
+
+    function applyOverlay(a) {
+      if (!a.plane) return;
+      const aspect = a.el.videoWidth ? a.el.videoHeight / a.el.videoWidth : 1;   // keep the video's shape
+      a.plane.scale.set(a.scale, a.scale * aspect, 1);
+      a.plane.position.set(a.x, a.y, 0);
+      updateFade(a);
+    }
+
+    // Fade the animation in (ease-out) each time its drawing is (re)found.
+    const smoothstep = (e0, e1, v) => { const t = Math.min(1, Math.max(0, (v - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+    const _m = new THREE.Matrix4(), _basis = new THREE.Matrix4(), _p = new THREE.Vector3(), _s = new THREE.Vector3();
+    const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3();
+    const _tracked = new THREE.Quaternion(), _square = new THREE.Quaternion(), _want = new THREE.Quaternion();
+
+    function updateOrientation(a, camera, now) {
+      if (!a.tracking || !a.group) return;
+      // The drawing's pose in camera space (MindAR's camera never moves, but don't rely on it).
+      a.group.updateMatrixWorld(true);
+      _m.multiplyMatrices(camera.matrixWorldInverse, a.group.matrixWorld).decompose(_p, _tracked, _s);
+      // Tilt = angle between the drawing's normal and the camera's viewing axis. 0 = phone parallel to the drawing.
+      _z.set(0, 0, 1).applyQuaternion(_tracked);
+      const facing = _z.z >= 0 ? 1 : -1;
+      a.tilt = THREE.MathUtils.radToDeg(Math.acos(Math.min(1, Math.abs(_z.z))));
+      // "Square" pose: parallel to the screen (so it projects as an undistorted square anywhere in view),
+      // keeping the drawing's in-plane rotation so it still turns with the phone.
+      _x.set(1, 0, 0).applyQuaternion(_tracked).setZ(0);
+      if (_x.lengthSq() < 1e-6) _x.set(1, 0, 0);
+      _x.normalize(); _z.set(0, 0, facing); _y.crossVectors(_z, _x);
+      _square.setFromRotationMatrix(_basis.makeBasis(_x, _y, _z));
+      const w = Math.max(1 - smoothstep(SNAP_IN, SNAP_OUT, a.tilt), 1 - smoothstep(0, SETTLE_MS, now - a.foundAt));
+      a.squareWeight = w;
+      // Blend tracked -> square, then express it relative to the anchor (plane's local rotation).
+      _want.copy(_tracked).slerp(_square, w);
+      a.plane.quaternion.copy(_tracked).invert().multiply(_want);
+    }
+
+    function showTrackingStatus() {
+      const n = ARTWORKS.filter((a) => a.tracking).length;
+      if (n === 0) setStatus('Point the camera at the image');
+      else setStatus(n === 1 ? 'Image found' : `${n} images found`, 'ok');
+    }
+
+    function updateFade(a) {
+      if (!a.material) return;
+      a.plane.visible = videoReady(a);   // nothing to draw (and no texture upload) until the video has a frame
+      if (!a.plane.visible) { a.material.opacity = 0; a.foundAt = performance.now(); return; }
+      const t = FADE_MS > 0 ? Math.min(1, (performance.now() - a.foundAt) / FADE_MS) : 1;
+      a.material.opacity = a.opacity * (1 - Math.pow(1 - t, 3));
+    }
+
+    // Videos download on first sight. Until a video has a frame to show, keep it invisible (the drawing shows
+    // through) and hold the fade/settle clock at zero, so the animation fades in as soon as it is ready.
+    function loadVideo(a) {
+      if (a.el.getAttribute('src')) return;
+      a.el.preload = 'auto'; a.el.src = a.video; a.el.load();
+      log(`loading ${a.video}`);
+    }
+    // Phones (iPhone Safari especially) run out of memory with many videos loaded, which can kill tracking.
+    // A video whose drawing has been out of view for UNLOAD_MS is unloaded; it reloads when the drawing returns.
+    const UNLOAD_MS = num('unload', 8000);
+    function unloadIdleVideos(now) {
+      for (const a of ARTWORKS) {
+        if (a.tracking || !a.el.getAttribute('src') || now - (a.lostAt || 0) < UNLOAD_MS) continue;
+        a.resumeAt = a.el.currentTime;
+        a.el.pause(); a.el.removeAttribute('src'); a.el.preload = 'none'; a.el.load();
+        log(`unloaded ${a.video}`);
+      }
+    }
+    const videoReady = (a) => a.el.readyState >= 2;
+
+    async function playVideo(a) {
+      try { await a.el.play(); }
+      catch (e) { log(`${a.video} play blocked: ${e.name}`); $('tap').style.display = 'flex'; }
+    }
+    $('tapBtn').onclick = () => { $('tap').style.display = 'none'; ARTWORKS.filter((a) => a.tracking).forEach(playVideo); };
+
+    // Both the website and the app (which shows this same page from the website) load files by relative URL.
+    async function start() {
+      setStatus('Loading artwork…');
+      const targetUrl = 'targets.mind';
+
+      setStatus('Starting camera…');
+      const mindar = new MindARThree({
+        container: $('ar'),
+        imageTargetSrc: targetUrl,
+        uiLoading: 'no', uiScanning: 'no', uiError: 'no',
+        filterMinCF: 0.0001, filterBeta: 0.001,   // smoothing: less jitter, a bit more lag
+        missTolerance: 5, warmupTolerance: 3,
+        // Track every artwork at once, so several drawings in view each play their own video. Each extra
+        // tracked drawing costs phone CPU; lower with ?maxTrack=1 if older phones struggle.
+        maxTrack: Math.max(1, Math.min(ARTWORKS.length, num('maxTrack', ARTWORKS.length))),
+      });
+      const { renderer, scene, camera } = mindar;
+
+      for (const a of ARTWORKS) {
+        const texture = new THREE.VideoTexture(a.el);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        a.material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
+        a.plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), a.material);
+        applyOverlay(a);
+
+        const anchor = mindar.addAnchor(a.target);
+        anchor.group.add(a.plane);
+        a.group = anchor.group;
+        anchor.onTargetFound = () => {
+          a.tracking = true; a.foundAt = performance.now(); updateFade(a);
+          active = a; syncSliders();
+          showTrackingStatus(); log(`target found: ${a.name}`); post('target', { found: true, name: a.name });
+          loadVideo(a); playVideo(a);
+        };
+        anchor.onTargetLost = () => {
+          a.tracking = false; a.lostAt = performance.now(); a.el.pause();
+          log(`target lost: ${a.name}`); post('target', { found: false, name: a.name });
+          showTrackingStatus();
+        };
+      }
+
+      try {
+        await mindar.start();
+      } catch (e) {
+        setStatus('Camera unavailable', 'err');
+        log('camera error: ' + (e?.name || '') + ' ' + (e?.message || e));
+        return false;
+      }
+      // MindAR's camera <video> sets the "muted" attribute but not the property, so strict autoplay
+      // policies can leave it paused (black screen). Mute it properly and make sure it's playing.
+      const camVideo = [...$('ar').querySelectorAll('video')].find((v) => v.srcObject);
+      if (camVideo) {
+        camVideo.muted = true;
+        if (camVideo.paused) await camVideo.play().catch((e) => log('camera video play: ' + e.name));
+      }
+      setStatus('Point the camera at the image');
+      log(`camera started (${inApp ? 'in app' : 'browser'})`);
+      if (debugMode) window.__mindar = mindar;
+
+      // Watchdog. MindAR's tracking loop waits on a background worker and the GPU; if the phone kills either
+      // (low memory), the loop stops silently while the camera picture keeps running. If no frame has been
+      // processed for STALL_MS, restart tracking on the same camera; if that keeps happening, reload the page.
+      const STALL_MS = num('stall', 3000);
+      let lastProcessed = performance.now(), restarting = false, lastRestart = -Infinity;
+      const hookController = () => {
+        const c = mindar.controller, orig = c.onUpdate;
+        c.onUpdate = (d) => { if (d.type === 'processDone') lastProcessed = performance.now(); orig(d); };
+      };
+      hookController();
+      async function restartTracking(reason) {
+        if (restarting) return;
+        if (performance.now() - lastRestart < 30000) return reloadAndResume(reason + ', again');
+        restarting = true; lastRestart = performance.now();
+        log(`tracking stopped (${reason}); restarting`);
+        const old = mindar.controller;
+        try { old.stopProcessVideo(); old.worker?.terminate(); } catch {}
+        for (const anchor of mindar.anchors) {
+          if (anchor.visible) { anchor.visible = false; anchor.group.visible = false; anchor.onTargetLost?.(); }
+        }
+        try {
+          await mindar._startAR();
+          hookController(); lastProcessed = performance.now();
+          log('tracking restarted');
+        } catch (e) { log('restart failed: ' + (e?.message || e)); reloadAndResume('restart failed'); }
+        restarting = false;
+      }
+      setInterval(() => {
+        const now = performance.now();
+        unloadIdleVideos(now);
+        if (document.hidden || restarting) { lastProcessed = now; return; }
+        if (now - lastProcessed > STALL_MS) restartTracking(`no frame for ${Math.round((now - lastProcessed) / 1000)} s`);
+      }, 1000);
+      renderer.domElement.addEventListener('webglcontextlost', () => reloadAndResume('graphics context lost'));
+
+      let frames = 0, last = performance.now();
+      renderer.setAnimationLoop(() => {
+        const t = performance.now();
+        for (const a of ARTWORKS) { updateFade(a); updateOrientation(a, camera, t); }
+        renderer.render(scene, camera);
+        frames++;
+        const now = performance.now();
+        if (now - last > 1000) {
+          const seen = ARTWORKS.filter((a) => a.tracking).map((a) => `${a.name} (tilt ${a.tilt?.toFixed(0)}°, square ${Math.round((a.squareWeight ?? 0) * 100)}%)`).join(', ') || 'none';
+          $('stats').textContent = `fps ${Math.round(frames * 1000 / (now - last))} · tracking ${seen} · ${active.video} ${active.el.paused ? 'paused' : 'playing'} ${active.el.currentTime.toFixed(1)}s`;
+          frames = 0; last = now;
+        }
+      });
+
+      document.addEventListener('visibilitychange', () => {
+        for (const a of ARTWORKS) { if (document.hidden) a.el.pause(); else if (a.tracking) playVideo(a); }
+      });
+    }
+
+    const fail = (e) => { setStatus('Failed to start', 'err'); log('start failed: ' + (e?.message || e)); };
+
+    // Last resort: reload and go straight back to the camera (no start screen). At most 3 times in 2 minutes,
+    // so a phone that keeps failing ends on an error instead of reloading forever.
+    function reloadAndResume(reason) {
+      log('reloading: ' + reason);
+      let times = [];
+      try { times = JSON.parse(sessionStorage.getItem('arReloads') || '[]').filter((t) => Date.now() - t < 120000); } catch {}
+      if (times.length >= 3) { setStatus('Something went wrong. Reload the page to try again.', 'err'); return; }
+      try { sessionStorage.setItem('arReloads', JSON.stringify([...times, Date.now()])); } catch {}
+      const u = new URL(location.href); u.searchParams.set('resume', '1'); location.replace(u);
+    }
+
+    // --- Browser (QR code) flow: start screen -> camera prompt -> AR. Help screen if the camera is unavailable.
+    const ua = navigator.userAgent;
+    const isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const inAppBrowser = /Instagram|FBAN|FBAV|Line\/|KAKAOTALK|NAVER|Snapchat|Twitter|LinkedInApp|WeChat|MicroMessenger/i.test(ua);
+
+    function showHelp(kind) {
+      const browser = isIOS ? 'Safari' : 'Chrome';
+      const texts = {
+        denied: ['Camera access is off', isIOS
+          ? 'This experience needs your camera. In Safari, tap the "aA" button in the address bar → Website Settings → Camera → Allow, then tap Try again.'
+          : 'This experience needs your camera. Tap the icon to the left of the address bar → Permissions → Camera → Allow, then tap Try again.'],
+        unsupported: ["This browser can't use the camera", `Open this page in ${browser}: tap Copy link, open ${browser}, and paste it into the address bar.`],
+        busy: ['The camera is busy', 'Another app may be using the camera. Close it, then tap Try again.'],
+        other: ["Couldn't start the camera", `Tap Try again. If it still doesn't work, open this page in ${browser}.`],
+      };
+      const [title, text] = texts[kind] || texts.other;
+      $('helpTitle').textContent = title; $('helpText').textContent = text;
+      $('start').classList.remove('show'); $('help').classList.add('show');
+      $('status').classList.add('hidden');
+    }
+    $('retryBtn').onclick = () => location.reload();
+    $('copyBtn').onclick = async () => {
+      try { await navigator.clipboard.writeText(location.href); $('copyBtn').textContent = 'Link copied'; }
+      catch { prompt('Copy this link:', location.href); }
+    };
+
+    async function startFromTap() {
+      // Unlock video playback while we still have the user's tap (iOS needs this for later, especially if sound is added).
+      if (!navigator.mediaDevices?.getUserMedia) return showHelp('unsupported');
+      // Ask for the camera ourselves first so we can tell *why* it failed (MindAR swallows the reason).
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        stream.getTracks().forEach((t) => t.stop());
+      } catch (e) {
+        log('getUserMedia: ' + e.name);
+        return showHelp(e.name === 'NotAllowedError' || e.name === 'SecurityError' ? 'denied'
+          : e.name === 'NotReadableError' ? 'busy'
+          : e.name === 'NotFoundError' || e.name === 'OverconstrainedError' ? 'unsupported' : 'other');
+      }
+      $('start').classList.remove('show');
+      $('status').classList.remove('hidden');
+      start().then((ok) => { if (ok === false) showHelp('other'); }).catch(fail);
+    }
+
+    if (inApp) {
+      start().catch(fail);
+    } else {
+      fetch('targets.mind').catch(() => {});   // warm the tracking file while the visitor reads the start screen
+      $('status').classList.add('hidden');
+      if (inAppBrowser) $('inAppNote').classList.remove('hidden');
+      $('startBtn').onclick = startFromTap;
+      if (params.has('resume')) {   // came back from an automatic reload: skip the start screen
+        const u = new URL(location.href); u.searchParams.delete('resume'); history.replaceState(null, '', u);
+        startFromTap();
+      } else $('start').classList.add('show');
+    }
+  </script>
+</body>
+</html>
