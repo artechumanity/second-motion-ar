@@ -1,0 +1,2027 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Second Motion AR</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@800&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg: #000; --fg: #f5f1ec; --pill: rgba(0,0,0,.6); --ok: #3ddc84; --warn: #ffb020; --err: #ff5a5a;
+      --accent: #ff6b5a; --muted: #b8b8bd; --dim: #a9a9af; --soft: #d4d0cc; --page: #0b0b0c; --surface: #161618; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
+      font: 15px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-user-select: none; user-select: none; }
+    #ar { position: fixed; inset: 0; }
+    /* The camera view's guide frame, and the status pill just above it (clear of the buttons in the top corners). */
+    :root { --frame-size: min(70vw, 46vh, 340px); }
+    #status { position: fixed; left: 50%; transform: translate(-50%, -100%);
+      top: max(calc(45% - var(--frame-size) / 2 - 14px), calc(env(safe-area-inset-top) + 112px));
+      transition: top .25s ease, transform .25s ease;
+      background: var(--pill); padding: 10px 16px; border-radius: 999px; display: flex; gap: 8px; align-items: center;
+      z-index: 10; white-space: nowrap; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+    /* Once a drawing is in view (no frame), it moves up out of the way: just below the row of top buttons. */
+    #status.up { transform: translate(-50%, 0); top: calc(max(16px, env(safe-area-inset-top)) + 66px); }
+    #dot { width: 10px; height: 10px; border-radius: 50%; background: var(--warn); }
+    #dot.ok { background: var(--ok); } #dot.err { background: var(--err); }
+    #debugBtn { position: fixed; left: 16px; top: calc(max(16px, env(safe-area-inset-top)) + 52px); z-index: 10;
+      background: var(--pill); color: var(--fg); border: 0; border-radius: 999px; padding: 10px 14px; font: inherit; }
+    #debug { position: fixed; left: 16px; right: 16px; top: calc(max(16px, env(safe-area-inset-top)) + 104px); z-index: 12;
+      background: rgba(0,0,0,.75); border-radius: 14px; padding: 12px 14px; display: none; font-size: 13px; }
+    #debug.open { display: block; }
+    #debug label { display: grid; grid-template-columns: 70px 1fr 52px; align-items: center; gap: 8px; margin: 6px 0; }
+    #debug input[type=range] { width: 100%; }
+    #log { max-height: 90px; overflow: auto; font-family: ui-monospace, Menlo, monospace; font-size: 11px; opacity: .8; margin-top: 8px; white-space: pre-wrap; }
+    #tap { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 20; background: rgba(0,0,0,.5); }
+    #tap button { font: inherit; font-size: 17px; padding: 14px 22px; border-radius: 999px; border: 0; background: #fff; color: #000; }
+
+    /* Icons: <svg class="ic"><use href="#i-…"/></svg>. Styles set on the <svg> inherit into <use>. */
+    .ic { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .ic.solid { stroke: none; fill: currentColor; }
+    .saved .heart { fill: var(--accent); stroke: var(--accent); }
+
+    /* Scanning guide: shown while no drawing is fully in view */
+    #frame { position: fixed; left: 50%; top: 45%; width: var(--frame-size); aspect-ratio: 1; transform: translate(-50%, -50%);
+      z-index: 9; pointer-events: none; }
+    #frame i { position: absolute; width: 44px; height: 44px; border: 0 solid #fff; }
+    #frame i:nth-child(1) { left: 0; top: 0; border-width: 4px 0 0 4px; border-top-left-radius: 18px; }
+    #frame i:nth-child(2) { right: 0; top: 0; border-width: 4px 4px 0 0; border-top-right-radius: 18px; }
+    #frame i:nth-child(3) { left: 0; bottom: 0; border-width: 0 0 4px 4px; border-bottom-left-radius: 18px; }
+    #frame i:nth-child(4) { right: 0; bottom: 0; border-width: 0 4px 4px 0; border-bottom-right-radius: 18px; }
+    #frameHint { position: absolute; left: -60px; right: -60px; top: calc(100% + 20px); text-align: center; text-shadow: 0 1px 8px rgba(0,0,0,.7); }
+    #frameHint b { display: block; font-size: 20px; font-weight: 600; }
+    #frameHint span { display: block; margin-top: 4px; color: var(--soft); }
+
+    /* Bottom of the camera view: shutter + favorites, and the card for the drawing in view */
+    #bar { position: fixed; left: 0; right: 0; bottom: max(16px, env(safe-area-inset-bottom)); z-index: 11; pointer-events: none;
+      display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 0 12px; box-sizing: border-box; }
+    #bar > * { pointer-events: auto; }
+    #shutterRow { width: 100%; max-width: 560px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; pointer-events: none; }
+    #shutterRow > * { pointer-events: auto; }
+    #favBtn { justify-self: end; margin-right: 4px; }
+    #shutter, #boothShutter { width: 72px; height: 72px; border-radius: 50%; border: 4px solid #fff; background: rgba(0,0,0,.25); padding: 0;
+      display: flex; align-items: center; justify-content: center; color: var(--page); }
+    #shutter span, #boothShutter span { width: 54px; height: 54px; border-radius: 50%; background: #fff; display: flex; align-items: center; justify-content: center; transition: transform .1s; }
+    #shutter:active span, #boothShutter:active span { transform: scale(.9); }
+    #shutter .ic, #boothShutter .ic { width: 22px; height: 22px; }
+    #card { width: 100%; max-width: 560px; box-sizing: border-box; background: rgba(18,18,20,.92); border: 1px solid rgba(255,255,255,.08);
+      border-radius: 24px; padding: 16px; display: flex; flex-direction: column; gap: 14px; animation: rise .25s ease-out;
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+    .cardTop { display: flex; gap: 14px; align-items: center; }
+    .cardTop img { width: 56px; height: 56px; border-radius: 12px; object-fit: cover; flex: none; background: #222; }
+    .cardTitles { flex: 1; min-width: 0; }
+    .cardTitles h3 { margin: 2px 0 0; font-size: 24px; line-height: 1.15; font-weight: 600; }
+    .roundBtn { width: 48px; height: 48px; border-radius: 50%; border: 0; background: rgba(255,255,255,.1); color: var(--fg);
+      display: inline-flex; align-items: center; justify-content: center; flex: none; padding: 0; }
+    .roundBtn .ic { width: 22px; height: 22px; }
+    .btnRow { display: flex; gap: 10px; }
+    .btnRow .pillBtn { flex: 1; justify-content: center; min-height: 52px; box-sizing: border-box; }
+    .btnRow .pillBtn.tight { flex: none; }
+    .subRow { display: flex; gap: 8px; border-top: 1px solid rgba(255,255,255,.08); padding-top: 12px; }
+    .subBtn { flex: 1; min-width: 0; white-space: nowrap; display: inline-flex; gap: 8px; align-items: center; justify-content: center; min-height: 44px; border-radius: 12px; border: 0;
+      background: rgba(255,255,255,.06); color: var(--fg); font: inherit; font-weight: 500; }
+    .thumbs { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+    .thumbs::-webkit-scrollbar { display: none; }
+    .thumbBtn { flex: none; width: 48px; height: 48px; padding: 0; border: 0; border-radius: 12px; background: #222; overflow: hidden; opacity: .7; }
+    .thumbBtn img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .thumbBtn.on { opacity: 1; outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    .pillBtn { font: inherit; font-size: 16px; font-weight: 600; color: var(--fg); background: var(--pill); border: 0; border-radius: 999px;
+      padding: 12px 18px; display: inline-flex; gap: 8px; align-items: center; white-space: nowrap; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+    .pillBtn.light { background: #fff; color: #000; }
+    .pillBtn.outline { background: transparent; border: 1px solid rgba(255,255,255,.25); }
+    .kicker { color: var(--accent); font-size: 13px; letter-spacing: 2px; font-weight: 600; }
+    .kicker.sm { font-size: 12px; letter-spacing: 1.5px; }
+    .fine { color: var(--dim); font-size: 13px; line-height: 1.4; margin: 0; }
+    #flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 50; transition: opacity .35s; }
+    #flash.on { opacity: .85; transition: none; }
+    #toast { position: fixed; left: 50%; bottom: calc(max(16px, env(safe-area-inset-bottom)) + 120px); transform: translateX(-50%) translateY(10px);
+      background: rgba(30,30,32,.95); padding: 12px 18px; border-radius: 999px; z-index: 60; opacity: 0; pointer-events: none;
+      transition: opacity .2s, transform .2s; white-space: nowrap; font-weight: 600; }
+    #toast.show { opacity: 1; transform: translateX(-50%); }
+
+    /* Full-screen pages: viewer, favorites, photo */
+    .page { position: fixed; inset: 0; z-index: 25; display: none; flex-direction: column; align-items: center; gap: 16px; background: var(--page);
+      padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); box-sizing: border-box; }
+    .page > * { width: 100%; max-width: 640px; }
+    .page.show { display: flex; }
+    .page header, .sheet header { display: flex; align-items: center; gap: 12px; min-height: 44px; }
+    .page header .titles, .sheet header .titles { flex: 1; min-width: 0; }
+    .page h2, .sheet h2 { margin: 2px 0 0; font-size: 26px; line-height: 1.15; font-weight: 600; }
+    .iconBtn { width: 44px; height: 44px; border-radius: 50%; border: 0; background: rgba(255,255,255,.12); color: var(--fg);
+      font: inherit; display: inline-flex; align-items: center; justify-content: center; flex: none; padding: 0; }
+    .textBtn { font: inherit; color: var(--muted); background: none; border: 0; padding: 12px 6px; }
+    .stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+    #viewerVideo, #photoImg { max-width: 100%; max-height: 100%; border-radius: 18px; background: #000; display: block; }
+    .rowLink { display: flex; gap: 14px; align-items: center; padding: 14px 16px; border-radius: 16px; border: 0; background: var(--surface);
+      color: var(--fg); font: inherit; text-align: left; }
+    .rowIcon { width: 44px; height: 44px; border-radius: 50%; background: rgba(255,107,90,.14); color: var(--accent);
+      display: inline-flex; align-items: center; justify-content: center; flex: none; }
+    .rowText { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .rowText b { font-size: 16px; }
+    .rowText small { color: var(--dim); font-size: 13px; }
+    .stripHead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+    .stripHead small { color: var(--dim); font-size: 13px; }
+    #foundThumbs .thumbBtn { width: 64px; height: 64px; }
+    #favCountText { color: var(--muted); }
+    #favGrid { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(140px, 30vw, 200px), 1fr));
+      gap: 16px 12px; align-content: start; -webkit-overflow-scrolling: touch; }
+    .card { border: 0; padding: 0; background: none; color: var(--fg); font: inherit; text-align: left; display: flex; flex-direction: column; gap: 8px; }
+    .card img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 14px; display: block; background: #222; }
+    .cardLabel { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+    .cardLabel b { font-size: 16px; }
+    .cardLabel small { color: var(--dim); font-size: 13px; }
+    .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 0 24px; box-sizing: border-box; }
+    .empty h3 { margin: 0; font-size: 22px; }
+    .empty p { margin: 0; color: var(--muted); font-size: 16px; line-height: 1.5; max-width: 320px; }
+    .emptyIcon { width: 96px; height: 96px; border-radius: 50%; background: rgba(255,107,90,.12); color: var(--accent); display: flex; align-items: center; justify-content: center; }
+    .emptyIcon .ic { width: 44px; height: 44px; stroke-width: 1.6; }
+    #favFooter { display: flex; flex-direction: column; gap: 14px; }
+    #favNote { display: flex; gap: 10px; align-items: center; }
+
+    /* Overlays that slide up from the bottom: About this work, Share */
+    /* Only the overlay's own close button closes it (no tap-outside), so the backdrop is just a dim layer. */
+    .sheetWrap { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.78); display: flex; align-items: flex-end; justify-content: center;
+      opacity: 0; pointer-events: none; transition: opacity .2s; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+    .sheetWrap.show { opacity: 1; pointer-events: auto; }
+    .sheet { width: 100%; max-width: 640px; box-sizing: border-box; background: #1d1d20; border-radius: 28px 28px 0 0;
+      border: 2px solid rgba(255,255,255,.36); border-bottom: 0; box-shadow: 0 -16px 48px rgba(0,0,0,.7);
+      padding: 12px 20px max(24px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 18px;
+      transform: translateY(24px); transition: transform .25s ease-out;
+      max-height: calc(100% - max(72px, env(safe-area-inset-top) + 64px)); }
+    .sheetWrap.show .sheet { transform: none; }
+    .grip { width: 40px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.35); align-self: center; flex: none; }
+    .sheet header .iconBtn { background: rgba(255,255,255,.18); }
+    .sheet header { flex: none; }
+    .sheet h3 { margin: 0 0 10px; font-size: 20px; font-weight: 600; }
+    .sheetBody { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 26px;
+      margin: 0 -20px; padding: 0 20px 8px; -webkit-user-select: text; user-select: text; }
+    .hero { width: 100%; aspect-ratio: 6 / 5; object-fit: cover; border-radius: 18px; display: block; background: #222; flex: none; }
+    .audio { background: var(--page); border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+    .seg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; background: var(--surface); border-radius: 999px; padding: 4px; }
+    .seg button { min-height: 40px; border-radius: 999px; border: 0; background: transparent; color: var(--soft); font: inherit; font-size: 14px; font-weight: 600; }
+    .seg button[aria-pressed="true"] { background: var(--fg); color: var(--page); }
+    .player { display: flex; gap: 14px; align-items: center; }
+    .playBtn { width: 56px; height: 56px; border-radius: 50%; border: 0; background: var(--accent); color: var(--page); display: inline-flex;
+      align-items: center; justify-content: center; flex: none; padding: 0; }
+    .playBtn .ic { width: 22px; height: 22px; }
+    .track { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+    .trackHead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+    .trackHead small { color: var(--dim); font-size: 13px; white-space: nowrap; }
+    .track .bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,.15); overflow: hidden; }
+    .track .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s linear; }
+    .speedBtn { min-width: 52px; min-height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,.2); background: transparent; color: var(--fg);
+      font: inherit; font-size: 14px; font-weight: 600; flex: none; }
+    .audio details summary { color: var(--accent); font-weight: 600; min-height: 32px; display: flex; align-items: center; }
+    .audio details p { margin: 8px 0 0; color: var(--soft); font-size: 16px; line-height: 1.55; }
+    .prose p { margin: 0 0 12px; color: var(--soft); font-size: 17px; line-height: 1.55; }
+    .step { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 14px; }
+    .step img, .step .ph { width: 88px; height: 88px; border-radius: 12px; flex: none; object-fit: cover; }
+    .step .ph { background: #1f1f22; color: var(--dim); font-size: 11px; display: flex; align-items: center; justify-content: center; text-align: center; padding: 6px; box-sizing: border-box; }
+    .step p { margin: 4px 0 0; color: var(--soft); font-size: 15px; line-height: 1.45; }
+    .details { margin: 0; background: var(--page); border-radius: 16px; padding: 4px 16px; }
+    .details div { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+    .details div:last-child { border-bottom: 0; }
+    .details dt { color: var(--dim); }
+    .details dd { margin: 0; text-align: right; }
+    .shareCard { background: var(--page); border-radius: 18px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .shareHead { display: flex; justify-content: space-between; align-items: baseline; }
+    .shareHead b { font-size: 18px; }
+    .shareHead small { color: var(--dim); font-size: 13px; }
+    .shareCard { min-height: 0; }
+    #shareThumbs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 8px; overflow-y: auto; padding: 4px;
+      margin: -4px; -webkit-overflow-scrolling: touch; }
+    /* Tap a work to include or leave it out of what's shared */
+    .pick { position: relative; padding: 0; border: 0; background: none; color: var(--fg); font: inherit; display: flex;
+      flex-direction: column; gap: 4px; text-align: left; min-width: 0; }
+    .pick img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; display: block; opacity: .4; transition: opacity .15s; }
+    .pick[aria-pressed="true"] img { opacity: 1; outline: 2px solid var(--accent); outline-offset: 2px; }
+    .pick .tick { position: absolute; top: 5px; right: 5px; width: 24px; height: 24px; border-radius: 50%; border: 2px solid #fff;
+      background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; box-sizing: border-box; color: var(--page); }
+    .pick[aria-pressed="true"] .tick { background: var(--accent); border-color: var(--accent); }
+    .pick .tick .ic { width: 14px; height: 14px; stroke-width: 3; visibility: hidden; }
+    .pick[aria-pressed="true"] .tick .ic { visibility: visible; }
+    .pick small { font-size: 12px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pillBtn:disabled { opacity: .4; }
+
+    /* MindAR's own scanning / loading overlays — we draw our own status instead */
+    .mindar-ui-overlay { display: none !important; }
+    /* Browser-only start + help screens (the app has its own native landing screen) */
+    .screen { position: fixed; inset: 0; z-index: 30; display: none; flex-direction: column; justify-content: space-between; align-items: center; gap: 20px;
+      background: var(--page); padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom)); box-sizing: border-box; overflow-y: auto; }
+    .screen > * { width: 100%; max-width: 520px; }
+    .screen.show { display: flex; }
+    .screen .body { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 16px; }
+    .screen h1 { margin: 0; font-size: 32px; line-height: 1.15; font-weight: 600; }
+    .screen p { margin: 0; color: var(--muted); font-size: 17px; line-height: 1.45; }
+    .screen .note { color: var(--warn); font-size: 15px; }
+    .fan { position: relative; height: 200px; margin: 8px 0; }
+    .fan img { position: absolute; top: 28px; width: 128px; height: 128px; object-fit: cover; border-radius: 14px; box-shadow: 0 12px 30px rgba(0,0,0,.5); }
+    .fan img:nth-child(1) { left: calc(50% - 150px); transform: rotate(-8deg); }
+    .fan img:nth-child(3) { left: calc(50% + 22px); transform: rotate(7deg); }
+    .fan img:nth-child(2) { left: calc(50% - 78px); top: 8px; width: 156px; height: 156px; z-index: 1; outline: 2px solid var(--accent); outline-offset: 4px; }
+    .steps { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+    .steps li { display: flex; gap: 14px; align-items: center; }
+    .steps li span { width: 28px; height: 28px; border-radius: 50%; border: 1px solid rgba(255,255,255,.3); display: inline-flex; align-items: center;
+      justify-content: center; font-size: 13px; font-weight: 600; flex: none; }
+    .btn { font: inherit; font-size: 17px; font-weight: 600; padding: 16px; min-height: 56px; border-radius: 999px; border: 0; background: #fff; color: #000;
+      width: 100%; display: flex; gap: 10px; align-items: center; justify-content: center; box-sizing: border-box; }
+    .btn .ic { width: 20px; height: 20px; }
+    .btn.secondary { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.35); margin-top: 10px; }
+    .inApp #projectBtn { left: 66px; top: calc(max(16px, env(safe-area-inset-top)) + 10px); }
+    /* Wordmark: Syne ExtraBold, two stacked lines, "Motion" stepped right in the accent colour */
+    .screen .wordmark { margin: 0; font-family: Syne, -apple-system, BlinkMacSystemFont, sans-serif; font-weight: 800;
+      font-size: min(14vw, 84px); line-height: 1.02; letter-spacing: -0.02em; display: flex; flex-direction: column; }
+    .wordmark span:last-child { color: var(--accent); margin-left: .42em; }
+    /* About the project: a light page, so it reads as a calm reference page apart from the camera */
+    #project { --page: #e9e7e4; --surface: #ffffff; --fg: #141414; --soft: #2f2f31; --muted: #47474b; --dim: #55555a; --accent: #b23a2a;
+      color: var(--fg); }
+    #project .iconBtn { background: rgba(0,0,0,.08); color: var(--fg); }
+    #project .btn { background: #141414; color: #fff; }
+    #project .howSteps li span { background: rgba(178,58,42,.12); }
+    #project .details div { border-bottom-color: rgba(0,0,0,.1); }
+    #project .card img { background: #d6d3cf; }
+    /* Photo booth: the picture fills the screen; controls float on top */
+    #booth { padding: 0; gap: 0; background: #000; }
+    #booth > * { max-width: none; }
+    #boothCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+    #booth header { position: absolute; top: 0; left: 0; right: 0; box-sizing: border-box;
+      padding: max(16px, env(safe-area-inset-top)) 16px 28px; background: linear-gradient(rgba(0,0,0,.6), rgba(0,0,0,0)); }
+    #booth header .iconBtn { background: rgba(0,0,0,.45); }
+    #boothMsg { position: absolute; left: 50%; transform: translateX(-50%); top: calc(max(16px, env(safe-area-inset-top)) + 64px);
+      width: max-content; max-width: calc(100% - 32px); box-sizing: border-box; background: rgba(0,0,0,.62); padding: 10px 16px;
+      border-radius: 18px; font-size: 14px; font-weight: 600; line-height: 1.35; text-align: center; pointer-events: none; }
+    #boothMsg:empty { display: none; }
+    #boothCount { position: absolute; inset: 0; width: auto; display: flex; align-items: center; justify-content: center; pointer-events: none;
+      font-size: 160px; font-weight: 800; color: #fff; text-shadow: 0 6px 40px rgba(0,0,0,.55); }
+    #boothCount:empty { display: none; }
+    .boothBar { position: absolute; left: 0; right: 0; bottom: 0; box-sizing: border-box; display: flex; flex-direction: column; align-items: center;
+      gap: 14px; padding: 40px 16px max(16px, env(safe-area-inset-bottom)); background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.65)); }
+    .boothBar > * { width: 100%; max-width: 440px; }
+    /* All the drawings in a strip that swipes sideways; padding keeps the selected outline from being clipped. */
+    .boothBar > #boothPicks { max-width: 640px; justify-content: safe center; gap: 6px; padding: 4px; box-sizing: border-box;
+      scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+    #boothPicks .thumbBtn { width: 40px; height: 40px; border-radius: 9px; scroll-snap-align: center; }
+    .boothRow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: center; }
+    .boothRow > :first-child { justify-self: start; }
+    #boothShutter:disabled { opacity: .45; }
+    #boothLook { min-height: 44px; padding: 0 16px; font-size: 14px; }
+    .linkRow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+    .linkRow .btn { font-size: 16px; padding: 12px; }
+    /* Top left, like every close button: the top right is where Expo Go draws its own gear button. In the app,
+       it sits beside the app's camera close button. */
+    #projectBtn { position: fixed; left: 16px; top: max(16px, env(safe-area-inset-top)); z-index: 10; background: var(--pill);
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+    /* About the project is an overlay too: a light sheet rising from the bottom over a dimmed, blurred backdrop,
+       stopping short of the top of the screen (like About this work). */
+    #project.page { background: rgba(0,0,0,.78); justify-content: flex-end; padding: 0; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+    #project .sheet { background: var(--page); border-color: rgba(255,255,255,.55); transform: none; }
+    #project .grip { background: rgba(0,0,0,.25); }
+    #project.show .sheet { animation: sheetUp .28s ease-out; }
+    @keyframes sheetUp { from { transform: translateY(40%); opacity: .4; } to { transform: none; opacity: 1; } }
+    #project .sheetBody > * { flex: none; }
+    #project .details { background: var(--surface); }
+    #project section h3 { margin: 0 0 10px; font-size: 20px; font-weight: 600; }
+    .howSteps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+    .howSteps li { display: flex; gap: 14px; align-items: flex-start; color: var(--soft); font-size: 16px; line-height: 1.45; }
+    .howSteps li span { width: 28px; height: 28px; border-radius: 50%; background: rgba(255,107,90,.14); color: var(--accent); display: inline-flex;
+      align-items: center; justify-content: center; font-size: 13px; font-weight: 600; flex: none; }
+    #worksGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 14px 10px; }
+    #worksGrid .card { gap: 6px; }
+    #worksGrid .card img { border-radius: 12px; }
+    #worksGrid .cardLabel b { font-size: 14px; }
+    #worksGrid .cardLabel small { font-size: 12px; }
+    .hidden { display: none !important; }
+  </style>
+  <script type="importmap">
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+      "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+    } }
+  </script>
+</head>
+<body>
+  <div id="ar"></div>
+  <div id="status"><span id="dot"></span><span id="msg">Loading…</span></div>
+  <button id="projectBtn" class="iconBtn hidden" aria-label="About the project"><svg class="ic"><use href="#i-info"/></svg></button>
+  <button id="debugBtn">Debug</button>
+  <div id="debug">
+    <div id="stats">fps – · tracking –</div>
+    <label>Scale <input id="s" type="range" min="0.5" max="2.5" step="0.01" /><span id="sv"></span></label>
+    <label>Offset X <input id="x" type="range" min="-0.5" max="0.5" step="0.005" /><span id="xv"></span></label>
+    <label>Offset Y <input id="y" type="range" min="-0.5" max="0.5" step="0.005" /><span id="yv"></span></label>
+    <label>Opacity <input id="o" type="range" min="0" max="1" step="0.05" /><span id="ov"></span></label>
+    <div id="log"></div>
+  </div>
+  <div id="frame" class="hidden" aria-hidden="true"><i></i><i></i><i></i><i></i>
+    <div id="frameHint"><b>Fit one drawing in the frame</b><span>Hold the phone about an arm's length away.</span></div>
+  </div>
+  <div id="flash"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></symbol>
+    <symbol id="i-sound" viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10z"/><path d="M16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5"/><path d="M5 12v7h14v-7"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+    <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="7.5" r="3.5"/><path d="M5 20.5c0-3.9 3.1-7 7-7s7 3.1 7 7"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  </svg>
+
+  <section id="start" class="screen">
+    <div class="body">
+      <h1 class="wordmark" aria-label="Second Motion"><span>Second</span><span>Motion</span></h1>
+      <p class="note hidden" id="inAppNote">You're in an in-app browser, and the camera may not work here. If it doesn't, open this page in Safari (iPhone) or Chrome (Android).</p>
+    </div>
+    <div>
+      <button class="btn" id="startBtn"><svg class="ic"><use href="#i-camera"/></svg>Open camera</button>
+      <div class="linkRow">
+        <button class="btn secondary" id="startFavs" style="margin-top: 0"><svg class="ic heart"><use href="#i-heart"/></svg>Favorites</button>
+        <button class="btn secondary" id="startProject" style="margin-top: 0"><svg class="ic"><use href="#i-info"/></svg>About</button>
+      </div>
+    </div>
+  </section>
+  <section id="help" class="screen">
+    <div class="body">
+      <div class="kicker" style="color: var(--warn)">CAMERA NEEDED</div>
+      <h1 id="helpTitle">Camera access is off</h1>
+      <p id="helpText"></p>
+    </div>
+    <div>
+      <button class="btn" id="retryBtn">Try again</button>
+      <button class="btn secondary" id="copyBtn">Copy link</button>
+    </div>
+  </section>
+  <div id="tap"><button id="tapBtn">Tap to start</button></div>
+
+  <div id="bar" class="hidden">
+    <div id="shutterRow">
+      <span></span>
+      <button id="shutter" aria-label="Take a photo"><span><svg class="ic"><use href="#i-camera"/></svg></span></button>
+      <button id="favBtn" class="pillBtn" aria-label="Favorites"><svg class="ic heart"><use href="#i-heart"/></svg><span id="favCount">0</span></button>
+    </div>
+    <div id="card" class="hidden">
+      <div id="cardSwitch" class="thumbs hidden"></div>
+      <div class="cardTop">
+        <img id="cardThumb" alt="">
+        <div class="cardTitles"><div class="kicker sm" id="cardKicker"></div><h3 id="cardTitle"></h3></div>
+        <button id="cardFav" class="roundBtn"><svg class="ic heart"><use href="#i-heart"/></svg></button>
+      </div>
+      <div class="btnRow">
+        <button id="cardWatch" class="pillBtn light"><svg class="ic solid"><use href="#i-play"/></svg>Watch</button>
+        <button id="cardPhoto" class="pillBtn outline tight" aria-label="Take a photo"><svg class="ic"><use href="#i-camera"/></svg></button>
+        <button id="cardFavs" class="pillBtn outline tight" aria-label="Favorites"><svg class="ic heart"><use href="#i-heart"/></svg><span id="cardFavCount">0</span></button>
+      </div>
+      <div class="subRow">
+        <button id="cardAbout" class="subBtn" aria-label="About this work"><svg class="ic"><use href="#i-info"/></svg>About</button>
+        <button id="cardListen" class="subBtn"><svg class="ic"><use href="#i-sound"/></svg>Listen</button>
+        <button id="cardPose" class="subBtn" aria-label="Photo booth: take a photo of someone with this animation"><svg class="ic"><use href="#i-person"/></svg>Pose</button>
+      </div>
+    </div>
+  </div>
+
+  <section id="viewer" class="page" aria-label="Animation">
+    <header>
+      <button id="viewerClose" class="iconBtn" aria-label="Back to camera"><svg class="ic"><use href="#i-close"/></svg></button>
+      <div class="titles"><div class="kicker sm" id="viewerKicker"></div><h2 id="viewerTitle"></h2></div>
+    </header>
+    <div class="stage"><video id="viewerVideo" muted loop playsinline webkit-playsinline></video></div>
+    <footer class="btnRow">
+      <button id="viewerPlay" class="pillBtn outline"><svg class="ic solid"><use href="#i-pause"/></svg><span>Pause</span></button>
+      <button id="viewerFav" class="pillBtn light"><svg class="ic heart"><use href="#i-heart"/></svg><span>Save</span></button>
+    </footer>
+    <button id="viewerAbout" class="rowLink">
+      <span class="rowIcon"><svg class="ic"><use href="#i-sound"/></svg></span>
+      <span class="rowText"><b>About this work</b><small>Story, process and audio description</small></span>
+      <svg class="ic"><use href="#i-chevron"/></svg>
+    </button>
+    <button id="viewerBooth" class="rowLink">
+      <span class="rowIcon"><svg class="ic"><use href="#i-person"/></svg></span>
+      <span class="rowText"><b>Photo booth</b><small>Take a selfie with this animation behind you</small></span>
+      <svg class="ic"><use href="#i-chevron"/></svg>
+    </button>
+    <div id="foundStrip">
+      <div class="stripHead"><b id="foundTitle"></b><small>Tap one to watch</small></div>
+      <div id="foundThumbs" class="thumbs"></div>
+    </div>
+  </section>
+
+  <section id="favs" class="page" aria-label="Favorites">
+    <header>
+      <button id="favsClose" class="iconBtn" aria-label="Back to camera"><svg class="ic"><use href="#i-close"/></svg></button>
+      <div class="titles"><div class="kicker sm">SECOND MOTION</div><h2>Favorites</h2></div>
+      <button id="favsClear" class="textBtn">Clear all</button>
+    </header>
+    <div id="favCountText"></div>
+    <div id="favGrid"></div>
+    <div id="favEmpty" class="empty">
+      <div class="emptyIcon"><svg class="ic"><use href="#i-heart"/></svg></div>
+      <h3>Nothing saved yet</h3>
+      <p>Find a drawing, tap Watch, then tap the heart. Your saved animations collect here.</p>
+    </div>
+    <div id="favFooter">
+      <button id="favShare" class="btn"><svg class="ic"><use href="#i-share"/></svg>Share my favorites</button>
+      <button id="favBooth" class="btn secondary"><svg class="ic"><use href="#i-person"/></svg>Photo booth</button>
+      <button id="favBack" class="btn"><svg class="ic"><use href="#i-camera"/></svg><span>Back to camera</span></button>
+      <p id="favNote" class="fine"><svg class="ic"><use href="#i-clock"/></svg><span></span></p>
+    </div>
+  </section>
+
+  <section id="project" class="page" aria-label="About the project">
+   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="projectTitle">
+    <div class="grip"></div>
+    <header>
+      <div class="titles"><div class="kicker sm">SECOND MOTION</div><h2 id="projectTitle">About the project</h2></div>
+      <button id="projectClose" class="iconBtn" aria-label="Close"><svg class="ic"><use href="#i-close"/></svg></button>
+    </header>
+    <div id="projectBody" class="sheetBody">
+    <section class="prose">
+      <h3>The project</h3>
+      <p>[What Second Motion is: the sculpture, the idea behind it, and why its drawings move.]</p>
+      <p>[The artist statement, in about 150 words.]</p>
+    </section>
+    <section>
+      <h3>How it works</h3>
+      <ol class="howSteps">
+        <li><span>1</span>Find a drawing on the sculpture and point your camera at it.</li>
+        <li><span>2</span>Fit the whole drawing on the screen. Its animation plays only when all of it is in view.</li>
+        <li><span>3</span>Watch it full screen, save it to your favorites, take a photo, or tap About this work for its story and audio description.</li>
+      </ol>
+    </section>
+    <section>
+      <h3>The drawings</h3>
+      <p class="fine" id="worksIntro" style="margin-bottom: 14px"></p>
+      <div id="worksGrid"></div>
+    </section>
+    <section>
+      <h3>Credits</h3>
+      <dl class="details">
+        <div><dt>Artist</dt><dd>[Artist name]</dd></div>
+        <div><dt>Sculpture</dt><dd>[Year, materials]</dd></div>
+        <div><dt>Animation</dt><dd>[Credit]</dd></div>
+        <div><dt>Thanks</dt><dd>[Credit]</dd></div>
+      </dl>
+    </section>
+    <button id="projectCamera" class="btn"><svg class="ic"><use href="#i-camera"/></svg>Open camera</button>
+    </div>
+   </div>
+  </section>
+
+  <section id="booth" class="page" aria-label="Photo booth">
+    <canvas id="boothCanvas" aria-label="Camera picture with the animation behind you"></canvas>
+    <header>
+      <button id="boothClose" class="iconBtn" aria-label="Close the photo booth"><svg class="ic"><use href="#i-close"/></svg></button>
+      <div class="titles"><div class="kicker sm">PHOTO BOOTH</div><h2 id="boothTitle"></h2></div>
+    </header>
+    <div id="boothMsg" role="status" aria-live="polite"></div>
+    <div id="boothCount" aria-hidden="true"></div>
+    <div class="boothBar">
+      <div id="boothPicks" class="thumbs" aria-label="Choose the animation"></div>
+      <div class="boothRow">
+        <button id="boothLook" class="pillBtn outline"></button>
+        <button id="boothShutter" aria-label="Take the photo"><span><svg class="ic"><use href="#i-camera"/></svg></span></button>
+        <span></span>
+      </div>
+      <div class="seg" role="group" aria-label="Who takes the photo">
+        <button id="boothSelfie" aria-pressed="true">Selfie</button>
+        <button id="boothDrawing" aria-pressed="false">At the drawing</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="photo" class="page" aria-label="Your photo">
+    <header>
+      <button id="photoClose" class="iconBtn" aria-label="Back to camera"><svg class="ic"><use href="#i-close"/></svg></button>
+      <div class="titles"><h2>Your photo</h2></div>
+    </header>
+    <div class="stage"><img id="photoImg" alt="Your photo of the animation on the sculpture"></div>
+    <footer class="btnRow">
+      <button id="photoRetake" class="pillBtn outline"><svg class="ic"><use href="#i-camera"/></svg>Retake</button>
+      <button id="photoShare" class="pillBtn light"><svg class="ic"><use href="#i-share"/></svg>Save or share</button>
+    </footer>
+    <p class="fine" style="text-align: center">The photo includes the animation and a small Second Motion label.</p>
+  </section>
+
+  <div id="share" class="sheetWrap" aria-hidden="true">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+      <div class="grip"></div>
+      <header>
+        <div class="titles"><h2 id="shareTitle">Share my favorites</h2></div>
+        <button id="shareClose" class="iconBtn" aria-label="Close"><svg class="ic"><use href="#i-close"/></svg></button>
+      </header>
+      <div class="shareCard">
+        <div class="shareHead"><b>Choose works to share</b><button id="shareAll" class="textBtn" style="padding: 6px 2px"></button></div>
+        <div id="shareCount" class="fine"></div>
+        <div id="shareThumbs"></div>
+        <div class="kicker sm">COMMUNICATION 101</div>
+      </div>
+      <div class="btnRow">
+        <button id="shareGo" class="pillBtn light"><svg class="ic"><use href="#i-share"/></svg>Share</button>
+        <button id="shareCopy" class="pillBtn outline"><svg class="ic"><use href="#i-link"/></svg>Copy link</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="about" class="sheetWrap" aria-hidden="true">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+      <div class="grip"></div>
+      <header>
+        <div class="titles"><div class="kicker sm" id="aboutKicker"></div><h2 id="aboutTitle"></h2></div>
+        <button id="aboutClose" class="iconBtn" aria-label="Close"><svg class="ic"><use href="#i-close"/></svg></button>
+      </header>
+      <div id="aboutBody" class="sheetBody">
+        <img id="aboutImg" class="hero" alt="">
+        <section class="audio" aria-label="Listen">
+          <div class="seg" role="group" aria-label="Audio track">
+            <button id="trkStory" aria-pressed="true">Artist's story</button>
+            <button id="trkDescribe" aria-pressed="false">Audio description</button>
+          </div>
+          <div class="player">
+            <button id="audioPlay" class="playBtn" aria-label="Play"><svg class="ic solid"><use href="#i-play"/></svg></button>
+            <div class="track">
+              <div class="trackHead"><b id="audioTitle"></b><small id="audioTime"></small></div>
+              <div class="bar"><i id="audioBar"></i></div>
+            </div>
+            <button id="audioSpeed" class="speedBtn" aria-label="Playback speed">1×</button>
+          </div>
+          <p id="audioNote" class="fine"></p>
+          <details><summary>Read the audio description</summary><p id="aboutDescribe"></p></details>
+        </section>
+        <section><h3>The story</h3><div id="aboutStory" class="prose"></div></section>
+        <section><h3>The process</h3><div id="aboutProcess"></div></section>
+        <dl id="aboutDetails" class="details"></dl>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    // The iPad app bundles three.js + MindAR as one script (window.ARLib, see scripts/build-app-assets.sh) so it
+    // works offline; the website loads them from the CDN through the import map above.
+    const { THREE, MindARThree } = window.ARLib
+      ?? { THREE: await import('three'), MindARThree: (await import('mindar-image-three')).MindARThree };
+    // Offline app: the page is a local file. fetch() can't read file:// URLs in iOS web views, so files the
+    // page fetches (the tracking file) are read with XMLHttpRequest and handed over as blob: URLs.
+    const isLocalFile = location.protocol === 'file:';
+    const readLocal = (path, responseType) => new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', path); xhr.responseType = responseType;
+      xhr.onload = () => (xhr.response ? resolve(xhr.response) : reject(new Error(`empty ${path}`)));
+      xhr.onerror = () => reject(new Error(`couldn't read ${path}`));
+      xhr.send();
+    });
+    // `type` relabels the file (WebAssembly must be served as application/wasm).
+    const localBlobUrl = async (path, type) => {
+      const blob = await readLocal(path, 'blob');
+      return URL.createObjectURL(type ? new Blob([blob], { type }) : blob);
+    };
+    const readBytes = async (path) => new Uint8Array(isLocalFile ? await readLocal(path, 'arraybuffer')
+      : await fetch(path).then((r) => { if (!r.ok) throw new Error(`${path}: ${r.status}`); return r.arrayBuffer(); }));
+
+    // The artworks on the sculpture. `target` = the drawing's index in targets.mind (compiled in this order).
+    // Overlay placement is in "target widths": the tracked image is 1 unit wide, centred at (0,0).
+    // Tune live with the Debug panel (edits the artwork in view), or for testing via ?scale=&x=&y=&opacity=&fade=
+    // (applies to every artwork).
+    const ARTWORKS = [
+      // Video frame fitted to the tile, slightly smaller than it (as in the reference recording).
+      { target: 0, name: 'Communication101-7-Girl', video: 'girl.mp4', scale: 0.92, x: 0, y: 0 },
+      // Animation is drawn on the same framing as the tile photo, so it lines up 1:1.
+      { target: 1, name: 'Communication101-12-FreeArt', video: 'freeart.mp4', scale: 1.0, x: 0, y: 0 },
+      // These three are also drawn on their tile photo's own framing.
+      { target: 2, name: 'Communication101-10-Oops', video: 'oops.mp4', scale: 1.0, x: 0, y: 0 },
+      { target: 3, name: 'Communication101-11-Hand', video: 'hand.mp4', scale: 1.0, x: 0, y: 0 },
+      // Dress's tile is mostly plain grey, too little detail to detect reliably, so its target is compiled from
+      // a 560-px crop around the dress (x 220-780, y 240-800 of the 1000-px photo). The video still covers the
+      // whole tile: 1000/560 = 1.786 target widths, nudged up by (520-500)/560 = 0.036 to the tile's centre.
+      { target: 4, name: 'Communication101-13-Dress', video: 'dress.mp4', scale: 1.786, x: 0, y: 0.036 },
+      { target: 5, name: 'Communication101-2-Wonder', video: 'wonder.mp4', scale: 1.0, x: 0, y: 0 },
+      { target: 6, name: 'Communication101-3-Ovary', video: 'ovary.mp4', scale: 1.0, x: 0, y: 0 },   // portrait
+      { target: 7, name: 'Communication101-8-Stamp', video: 'stamp.mp4', scale: 1.0, x: 0, y: 0 },
+      { target: 8, name: 'Communication101-9-Hills', video: 'hills.mp4', scale: 1.0, x: 0, y: 0 },
+      { target: 9, name: 'Communication101-14-TinMan', video: 'tinman.mp4', scale: 1.0, x: 0, y: 0 },
+      { target: 10, name: 'Communication101-17-Crown', video: 'crown.mp4', scale: 1.0, x: 0, y: 0 },
+    ];
+    // Display titles; thumbnails are thumb-<video name>.jpg (cut from the drawing photos).
+    const TITLES = { girl: 'Girl', freeart: 'Free Art', oops: 'Oops', hand: 'Hand', dress: 'Dress', wonder: 'Wonder',
+      ovary: 'Ovary', stamp: 'Stamp', hills: 'Hills', tinman: 'Tin Man', crown: 'Crown' };
+    for (const a of ARTWORKS) {
+      a.id = a.video.replace(/\.mp4$/, '');
+      a.title = TITLES[a.id] || a.name.replace(/^Communication1?0?1?-\d+-/, '');
+      a.thumb = `thumb-${a.id}.jpg`;
+      a.number = (a.name.match(/-(\d+)-/) || [])[1] || '';
+    }
+    const params = new URLSearchParams(location.search);
+    const num = (k, d) => (params.has(k) ? parseFloat(params.get(k)) : d);
+    for (const a of ARTWORKS) Object.assign(a, { scale: num('scale', a.scale), x: num('x', a.x), y: num('y', a.y), opacity: num('opacity', 1) });
+    const FADE_MS = num('fade', 600);   // fade-in each time a drawing is (re)found
+    // Front-facing snap. Pose estimates wobble by a few degrees, so a drawing seen head-on looks slightly skewed.
+    // Below SNAP_IN degrees of tilt the animation is drawn perfectly square (only the phone's roll is kept);
+    // between SNAP_IN and SNAP_OUT it blends to the tracked angle; above SNAP_OUT it follows the drawing fully.
+    // When a drawing is first found, the animation starts square and eases into the tracked angle over SETTLE_MS.
+    const SNAP_IN = num('snapIn', 10), SNAP_OUT = num('snapOut', 25), SETTLE_MS = num('settle', 800);
+
+    const $ = (id) => document.getElementById(id);
+    const inApp = !!window.ReactNativeWebView;
+    if (inApp) document.documentElement.classList.add('inApp');
+    const post = (type, data = {}) => { try { window.ReactNativeWebView?.postMessage(JSON.stringify({ type, ...data })); } catch {} };
+    const log = (m) => { const t = new Date().toLocaleTimeString(); $('log').textContent = `${t} ${m}\n` + $('log').textContent; post('log', { message: m }); console.log(m); };
+    // Debug button: on the website with ?debug, and in the Expo Go test app. Hidden in the offline iPad app,
+    // where tapping the status pill 5 times (within 3 s) reveals it.
+    const debugMode = params.has('debug') || (inApp && !isLocalFile);
+    if (!debugMode) $('debugBtn').classList.add('hidden');
+    let pillTaps = [];
+    $('status').addEventListener('click', () => {
+      const now = Date.now(); pillTaps = [...pillTaps.filter((t) => now - t < 3000), now];
+      if (pillTaps.length >= 5) { $('debugBtn').classList.remove('hidden'); pillTaps = []; }
+    });
+    const setStatus = (text, state = '') => { $('msg').textContent = text; $('dot').className = state; post('status', { text, state }); };
+    window.addEventListener('error', (e) => log('error: ' + e.message));
+    window.addEventListener('unhandledrejection', (e) => log('error (async): ' + (e.reason?.message || e.reason)));
+
+    // Debug panel
+    $('debugBtn').onclick = () => $('debug').classList.toggle('open');
+    let active = ARTWORKS[0];   // the artwork in view (or last seen): what the Debug sliders edit
+    const SLIDERS = [['scale', 's'], ['x', 'x'], ['y', 'y'], ['opacity', 'o']];
+    function syncSliders() { for (const [key, id] of SLIDERS) { $(id).value = active[key]; $(id + 'v').textContent = active[key]; } }
+    for (const [key, id] of SLIDERS) $(id).oninput = () => { active[key] = parseFloat($(id).value); $(id + 'v').textContent = $(id).value; applyOverlay(active); };
+    syncSliders();
+
+    // One hidden <video> per artwork.
+    for (const a of ARTWORKS) {
+      const v = document.createElement('video');
+      // No src yet: each video downloads only when its drawing is first found (see loadVideo).
+      Object.assign(v, { muted: true, loop: true, playsInline: true, preload: 'none' });
+      if (!isLocalFile) v.crossOrigin = 'anonymous';   // website: videos are drawn into WebGL
+      v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', ''); v.style.display = 'none';
+      v.addEventListener('loadeddata', () => { log(`${a.video} ready ${v.videoWidth}x${v.videoHeight}`); applyOverlay(a); });
+      // A video that was unloaded to save memory picks up where it left off.
+      v.addEventListener('loadedmetadata', () => { if (a.resumeAt && v.duration) v.currentTime = a.resumeAt % v.duration; a.resumeAt = 0; });
+      v.addEventListener('error', () => log(`${a.video} failed to load`));
+      document.body.appendChild(v);
+      // tracking: MindAR sees the drawing (maybe only partly). showing: the whole drawing is on screen, so its
+      // animation plays (see updateFullView).
+      Object.assign(a, { el: v, tracking: false, showing: false, foundAt: 0 });
+    }
+
+    function applyOverlay(a) {
+      if (!a.plane) return;
+      const aspect = a.el.videoWidth ? a.el.videoHeight / a.el.videoWidth : 1;   // keep the video's shape
+      a.plane.scale.set(a.scale, a.scale * aspect, 1);
+      a.plane.position.set(a.x, a.y, 0);
+      updateFade(a);
+    }
+
+    // Fade the animation in (ease-out) each time its drawing is (re)found.
+    const smoothstep = (e0, e1, v) => { const t = Math.min(1, Math.max(0, (v - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+    const _m = new THREE.Matrix4(), _basis = new THREE.Matrix4(), _p = new THREE.Vector3(), _s = new THREE.Vector3();
+    const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3();
+    const _tracked = new THREE.Quaternion(), _square = new THREE.Quaternion(), _want = new THREE.Quaternion();
+
+    function updateOrientation(a, camera, now) {
+      if (!a.tracking || !a.group) return;
+      // The drawing's pose in camera space (MindAR's camera never moves, but don't rely on it).
+      a.group.updateMatrixWorld(true);
+      _m.multiplyMatrices(camera.matrixWorldInverse, a.group.matrixWorld).decompose(_p, _tracked, _s);
+      // Tilt = angle between the drawing's normal and the camera's viewing axis. 0 = phone parallel to the drawing.
+      _z.set(0, 0, 1).applyQuaternion(_tracked);
+      const facing = _z.z >= 0 ? 1 : -1;
+      a.tilt = THREE.MathUtils.radToDeg(Math.acos(Math.min(1, Math.abs(_z.z))));
+      // "Square" pose: parallel to the screen (so it projects as an undistorted square anywhere in view),
+      // keeping the drawing's in-plane rotation so it still turns with the phone.
+      _x.set(1, 0, 0).applyQuaternion(_tracked).setZ(0);
+      if (_x.lengthSq() < 1e-6) _x.set(1, 0, 0);
+      _x.normalize(); _z.set(0, 0, facing); _y.crossVectors(_z, _x);
+      _square.setFromRotationMatrix(_basis.makeBasis(_x, _y, _z));
+      const w = Math.max(1 - smoothstep(SNAP_IN, SNAP_OUT, a.tilt), 1 - smoothstep(0, SETTLE_MS, now - a.foundAt));
+      a.squareWeight = w;
+      // Blend tracked -> square, then express it relative to the anchor (plane's local rotation).
+      _want.copy(_tracked).slerp(_square, w);
+      a.plane.quaternion.copy(_tracked).invert().multiply(_want);
+    }
+
+    function showTrackingStatus() {
+      renderBar();
+      const n = ARTWORKS.filter((a) => a.showing).length, partial = ARTWORKS.some((a) => a.tracking && !a.showing);
+      if (n > 0) setStatus(n === 1 ? '1 image found' : `${n} images found`, 'ok');
+      else if (partial) setStatus('Fit the whole drawing on the screen');
+      else setStatus('Point the camera at the image');
+    }
+
+    // Animations play only for drawings that are fully on screen. A drawing counts as in view when all four
+    // corners of its animation are inside the screen (1% slack); it drops out once a corner is more than 4%
+    // outside, so the animation doesn't flicker at the edge. ?fullView=0 turns this off.
+    const FULL_VIEW = num('fullView', 1) !== 0;
+    const CORNERS = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]], _corner = new THREE.Vector3();
+    function isFullyInView(a, camera, rect) {
+      if (!FULL_VIEW) return true;
+      const slack = (a.showing ? 0.04 : 0.01) * Math.min(innerWidth, innerHeight);
+      a.plane.updateWorldMatrix(true, false);
+      for (const [x, y] of CORNERS) {
+        _corner.set(x, y, 0).applyMatrix4(a.plane.matrixWorld).project(camera);
+        // NDC -> screen pixels. MindAR's canvas covers the screen and can extend past its edges.
+        const px = rect.left + (_corner.x + 1) / 2 * rect.width, py = rect.top + (1 - _corner.y) / 2 * rect.height;
+        if (px < -slack || px > innerWidth + slack || py < -slack || py > innerHeight + slack) return false;
+      }
+      return true;
+    }
+    function setShowing(a, on) {
+      if (a.showing === on) return;
+      a.showing = on;
+      if (on) { a.foundAt = a.shownAt = performance.now(); markFound(a); if (!coveredView()) playVideo(a); log(`in full view: ${a.name}`); }
+      else { a.el.pause(); a.lostAt = performance.now(); }
+      showTrackingStatus();
+    }
+
+    function updateFade(a) {
+      if (!a.material) return;
+      // Nothing to draw (and no texture upload) until the drawing is fully in view and its video has a frame.
+      a.plane.visible = a.showing && videoReady(a);
+      if (!a.plane.visible) { a.material.opacity = 0; a.foundAt = performance.now(); return; }
+      const t = FADE_MS > 0 ? Math.min(1, (performance.now() - a.foundAt) / FADE_MS) : 1;
+      a.material.opacity = a.opacity * (1 - Math.pow(1 - t, 3));
+    }
+
+    // Videos download on first sight. Until a video has a frame to show, keep it invisible (the drawing shows
+    // through) and hold the fade/settle clock at zero, so the animation fades in as soon as it is ready.
+    function loadVideo(a) {
+      if (a.el.getAttribute('src')) return;
+      a.el.preload = 'auto'; a.el.src = a.video; a.el.load();
+      log(`loading ${a.video}`);
+    }
+    // Phones (iPhone Safari especially) run out of memory with many videos loaded, which can kill tracking.
+    // A video whose drawing has been out of view for UNLOAD_MS is unloaded; it reloads when the drawing returns.
+    const UNLOAD_MS = num('unload', 8000);
+    function unloadIdleVideos(now) {
+      for (const a of ARTWORKS) {
+        if (a.tracking || !a.el.getAttribute('src') || now - (a.lostAt || 0) < UNLOAD_MS) continue;
+        a.resumeAt = a.el.currentTime;
+        a.el.pause(); a.el.removeAttribute('src'); a.el.preload = 'none'; a.el.load();
+        log(`unloaded ${a.video}`);
+      }
+    }
+    const videoReady = (a) => a.el.readyState >= 2;
+
+    async function playVideo(a) {
+      try { await a.el.play(); }
+      catch (e) {
+        log(`${a.video} play blocked: ${e.name}`);
+        // Only when the browser refuses to play without a tap. An AbortError just means a pause() interrupted
+        // this play() (the drawing left view, or an overlay opened); the next play() works.
+        if (e.name === 'NotAllowedError') $('tap').style.display = 'flex';
+      }
+    }
+    $('tapBtn').onclick = () => { $('tap').style.display = 'none'; ARTWORKS.filter((a) => a.showing).forEach(playVideo); };
+
+    // --- Work descriptions: written text plus audio for each artwork. Until the texts and recordings arrive,
+    // placeholders show and the device's own voice reads the text. To add a work's content, fill in its entry:
+    //   girl: { artist: '…', medium: '…', year: '…', story: ['paragraph', '…'], process: ['drawing', 'animation', 'sculpture'],
+    //           describe: 'audio description text', audio: { story: 'audio-girl-story.mp3', describe: 'audio-girl-describe.mp3' } },
+    // (Recordings go in assets/ar and in src/offlineAR.ts, like the videos.)
+    const WORK_INFO = {};
+    function info(a) {
+      const i = WORK_INFO[a.id] || {};
+      return {
+        artist: i.artist || '[Artist name]', medium: i.medium || '[Medium]', year: i.year || '[Year]',
+        story: i.story || [`[The story behind ${a.title} will go here: what it shows, the moment it captures, and how it connects to Communication 101.]`],
+        process: i.process || ['[How the drawing was made: materials, tools and time.]', '[How the drawing was brought to life, frame by frame.]',
+          '[How the drawing was placed on the sculpture.]'],
+        describe: i.describe || `[An audio description of ${a.title} will go here: what the drawing looks like and what happens in its animation, for blind and low-vision visitors.]`,
+        audio: i.audio || {},
+      };
+    }
+    const kicker = (a) => `NO. ${a.number} · COMMUNICATION 101`;
+    const byId = (id) => ARTWORKS.find((a) => a.id === id);
+    const SITE_URL = 'https://artechumanity.github.io/second-motion-ar/';
+    const VISITOR_RESET_MIN = num('visitorReset', inApp ? 3 : 0);
+
+    let toastTimer = 0;
+    function toast(text) {
+      $('toast').textContent = text; $('toast').classList.add('show');
+      clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 2200);
+    }
+
+    // --- Favorites: saved on this device (browser storage), so they survive closing the page or app.
+    const FAV_KEY = 'secondMotionFavorites';
+    let favorites = [];
+    try { favorites = JSON.parse(localStorage.getItem(FAV_KEY) || '[]').filter((id) => byId(id)); } catch {}
+    const isFav = (a) => favorites.includes(a.id);
+    const saveFavorites = () => { try { localStorage.setItem(FAV_KEY, JSON.stringify(favorites)); } catch {} };
+    function setFav(a, on) {
+      favorites = favorites.filter((id) => id !== a.id);
+      if (on) favorites.unshift(a.id);   // newest first
+      saveFavorites();
+      log(`${on ? 'saved' : 'removed'} favorite: ${a.title}`);
+      renderFavCount(); renderBar();
+    }
+    function renderFavCount() { $('favCount').textContent = favorites.length; $('cardFavCount').textContent = favorites.length; }
+    renderFavCount();
+
+    // Drawings found during this visit (the "4 / 11 found" chip and the viewer's strip).
+    let found = [];
+    function markFound(a) { if (!found.includes(a.id)) found.push(a.id); }
+
+    // --- Full-screen pages (viewer, favorites, photo) and overlays (About, Share). While the camera view is
+    // covered, its animations pause.
+    let openPage = null, viewerArtwork = null, viewerFrom = null, aboutOpen = false, cameraOn = false, cameraStarting = false;
+    const coveredView = () => !!openPage || aboutOpen;
+    function pauseAR() { for (const a of ARTWORKS) a.el.pause(); }
+    function resumeAR() { if (!coveredView()) ARTWORKS.filter((a) => a.showing).forEach(playVideo); }
+    function showPage(id) {
+      for (const pid of ['viewer', 'favs', 'photo', 'project', 'booth']) $(pid).classList.toggle('show', pid === id);
+      openPage = id;
+      reportCovered();
+      if (id) pauseAR(); else resumeAR();
+      renderBar();
+    }
+    function showSheet(id, on) {
+      $(id).classList.toggle('show', on); $(id).setAttribute('aria-hidden', String(!on));
+      reportCovered();
+    }
+    // The app draws its own close button (top left) over the camera view. It closes the whole AR screen, so
+    // the app hides it whenever a page or overlay is open; those have their own close buttons.
+    let lastCovered = null;
+    function reportCovered() {
+      const on = coveredView() || $('share').classList.contains('show');
+      if (on !== lastCovered) { lastCovered = on; post('covered', { on }); }
+    }
+
+    // Camera view: the card for the drawing in view. With several drawings in view, small thumbnails switch
+    // between them. The card stays for a moment after the drawing leaves the screen, so it can still be tapped.
+    let cardPick = null, lastCard = null;
+    const CARD_LINGER_MS = 3000;
+    function cardArtwork() {
+      const showing = ARTWORKS.filter((a) => a.showing);
+      if (showing.length) {
+        lastCard = (cardPick && showing.includes(cardPick)) ? cardPick : showing.reduce((m, a) => ((a.shownAt || 0) > (m.shownAt || 0) ? a : m));
+        return lastCard;
+      }
+      return lastCard && performance.now() - (lastCard.lostAt || 0) < CARD_LINGER_MS ? lastCard : null;
+    }
+    function renderBar() {
+      const a = cameraOn ? cardArtwork() : null, showing = ARTWORKS.filter((x) => x.showing);
+      const frameHidden = !cameraOn || !!a || ARTWORKS.some((x) => x.tracking) || coveredView();
+      $('frame').classList.toggle('hidden', frameHidden);
+      $('status').classList.toggle('up', cameraOn && frameHidden);
+      $('projectBtn').classList.toggle('hidden', !cameraOn);
+      $('card').classList.toggle('hidden', !a);
+      $('shutterRow').classList.toggle('hidden', !!a);   // the card has its own photo and favorites buttons
+      if (!a) { $('card').dataset.key = ''; return; }
+      const key = `${a.id}|${isFav(a)}|${showing.map((x) => x.id).join()}`;
+      if ($('card').dataset.key === key) return;
+      $('card').dataset.key = key;
+      $('cardThumb').src = a.thumb; $('cardKicker').textContent = `NO. ${a.number}`; $('cardTitle').textContent = a.title;
+      $('cardFav').classList.toggle('saved', isFav(a));
+      $('cardFav').setAttribute('aria-label', isFav(a) ? `Remove ${a.title} from favorites` : `Save ${a.title} to favorites`);
+      const sw = $('cardSwitch'); sw.textContent = '';
+      sw.classList.toggle('hidden', showing.length < 2);
+      if (showing.length > 1) for (const s of showing) sw.appendChild(thumbButton(s, s === a, () => { cardPick = s; renderBar(); }));
+    }
+    function thumbButton(a, on, onclick) {
+      const b = document.createElement('button');
+      b.className = 'thumbBtn' + (on ? ' on' : ''); b.setAttribute('aria-label', a.title);
+      b.innerHTML = '<img alt="">'; b.querySelector('img').src = a.thumb;
+      b.onclick = onclick;
+      return b;
+    }
+    const withCard = (fn) => () => { const a = cardArtwork(); if (a) fn(a); };
+    $('cardFav').onclick = withCard((a) => setFav(a, !isFav(a)));
+    $('cardWatch').onclick = withCard((a) => openViewer(a));
+    $('cardAbout').onclick = withCard((a) => openAbout(a));
+    $('cardListen').onclick = withCard((a) => openAbout(a, { listen: true }));
+
+    // Viewer: one animation, full screen, so visitors can lower the phone or iPad and watch it.
+    const viewerVideo = $('viewerVideo');
+    function openViewer(a, from = null) {
+      viewerArtwork = a; viewerFrom = from;
+      $('viewerTitle').textContent = a.title; $('viewerKicker').textContent = kicker(a);
+      viewerVideo.src = a.video; viewerVideo.currentTime = 0;
+      viewerVideo.play().catch(() => {});
+      renderViewer(); renderFoundStrip();
+      showPage('viewer');
+      log(`watching ${a.title}`);
+    }
+    function renderViewer() {
+      const saved = isFav(viewerArtwork);
+      $('viewerFav').classList.toggle('saved', saved);
+      $('viewerFav').querySelector('span').textContent = saved ? 'Saved' : 'Save';
+      const paused = viewerVideo.paused;
+      $('viewerPlay').querySelector('use').setAttribute('href', paused ? '#i-play' : '#i-pause');
+      $('viewerPlay').querySelector('span').textContent = paused ? 'Play' : 'Pause';
+    }
+    function renderFoundStrip() {
+      $('foundStrip').classList.toggle('hidden', found.length < 2);
+      $('foundTitle').textContent = `You've found ${found.length} of ${ARTWORKS.length}`;
+      const box = $('foundThumbs'); box.textContent = '';
+      for (const id of found) { const a = byId(id); box.appendChild(thumbButton(a, a === viewerArtwork, () => openViewer(a, viewerFrom))); }
+    }
+    function closeViewer() {
+      viewerVideo.pause(); viewerVideo.removeAttribute('src'); viewerVideo.load();   // free the decoder
+      if (viewerFrom === 'favs') openFavs(); else showPage(null);
+    }
+    viewerVideo.addEventListener('play', renderViewer);
+    viewerVideo.addEventListener('pause', renderViewer);
+    $('viewerPlay').onclick = () => { if (viewerVideo.paused) viewerVideo.play().catch(() => {}); else viewerVideo.pause(); };
+    viewerVideo.onclick = $('viewerPlay').onclick;
+    $('viewerFav').onclick = () => { setFav(viewerArtwork, !isFav(viewerArtwork)); renderViewer(); };
+    $('viewerClose').onclick = closeViewer;
+    $('viewerAbout').onclick = () => openAbout(viewerArtwork);
+
+    // Favorites page: a grid of saved animations; tap one to watch it.
+    function renderFavs() {
+      const grid = $('favGrid'), n = favorites.length; grid.textContent = '';
+      for (const id of favorites) {
+        const a = byId(id);
+        const card = document.createElement('button');
+        card.className = 'card';
+        card.innerHTML = '<img alt=""><span class="cardLabel"><b></b><small></small></span>';
+        card.querySelector('img').src = a.thumb;
+        card.querySelector('b').textContent = a.title;
+        card.querySelector('small').textContent = `No. ${a.number}`;
+        card.onclick = () => openViewer(a, 'favs');
+        grid.appendChild(card);
+      }
+      grid.classList.toggle('hidden', n === 0);
+      $('favEmpty').classList.toggle('hidden', n > 0);
+      $('favsClear').classList.toggle('hidden', n === 0);
+      $('favsClear').textContent = 'Clear all';
+      $('favCountText').textContent = n ? `${n} saved` : '';
+      $('favShare').classList.toggle('hidden', n === 0);
+      $('favBooth').classList.toggle('hidden', n === 0);
+      $('favBack').classList.toggle('hidden', n > 0);
+      $('favBack').querySelector('span').textContent = cameraOn ? 'Back to camera' : 'Open camera';
+      $('favNote').classList.toggle('hidden', !(VISITOR_RESET_MIN > 0 && n > 0));
+      $('favNote').querySelector('span').textContent =
+        `On this device, favorites clear after ${VISITOR_RESET_MIN} minutes without use, ready for the next visitor.`;
+    }
+    function openFavs() { renderFavs(); showPage('favs'); }
+    // Pages opened before the camera started (from the start screen, a shared link, or the app's landing
+    // screen) go back there when closed.
+    function closeFavs() { closeToStart(); }
+    function closeToStart() {
+      showPage(null);
+      if (cameraOn || cameraStarting) return;
+      if (inApp) post('close');   // the app's own landing screen
+      else $('start').classList.add('show');
+    }
+    // About the project: what Second Motion is, how it works, all the drawings, credits.
+    function openProject() {
+      $('worksIntro').textContent = `${ARTWORKS.length} animated drawings from the series Communication 101. Tap one to read about it.`;
+      $('worksGrid').replaceChildren(...[...ARTWORKS].sort((a, b) => a.number - b.number).map((a) => {
+        const card = document.createElement('button');
+        card.className = 'card';
+        card.innerHTML = '<img alt=""><span class="cardLabel"><b></b><small></small></span>';
+        card.querySelector('img').src = a.thumb;
+        card.querySelector('b').textContent = a.title;
+        card.querySelector('small').textContent = `No. ${a.number}`;
+        card.onclick = () => openAbout(a);
+        return card;
+      }));
+      $('start').classList.remove('show');
+      $('projectBody').scrollTop = 0;
+      showPage('project');
+    }
+    $('projectBtn').onclick = openProject;
+    $('projectClose').onclick = closeToStart;
+    $('projectCamera').onclick = () => { showPage(null); if (!cameraOn) startCamera(); };
+    $('favBtn').onclick = openFavs;
+    $('cardFavs').onclick = openFavs;
+    $('favsClose').onclick = closeFavs;
+    $('favBack').onclick = () => { if (cameraOn || cameraStarting) showPage(null); else { showPage(null); startCamera(); } };
+    // Two taps to clear (no browser confirm dialogs: they block the page in the app).
+    $('favsClear').onclick = () => {
+      if ($('favsClear').textContent === 'Clear all') { $('favsClear').textContent = 'Tap again to clear'; return; }
+      favorites = []; saveFavorites();
+      renderFavCount(); renderFavs(); log('favorites cleared');
+    };
+
+    // Share favorites: a link to the website that opens with the same favorites (?fav=girl,crown).
+    // The visitor picks which favorites to share; all are picked when the panel opens.
+    let sharePicked = [];
+    const shareIds = () => favorites.filter((id) => sharePicked.includes(id));
+    const favLink = () => `${SITE_URL}?fav=${shareIds().join(',')}`;
+    function renderSharePicks() {
+      const n = shareIds().length, all = n === favorites.length;
+      for (const b of $('shareThumbs').children) b.setAttribute('aria-pressed', String(sharePicked.includes(b.dataset.id)));
+      $('shareCount').textContent = n ? `${n} of ${favorites.length} selected` : 'Tap the works you want to share.';
+      $('shareAll').textContent = all ? 'Select none' : 'Select all';
+      $('shareGo').disabled = n === 0; $('shareCopy').disabled = n === 0;
+    }
+    $('favShare').onclick = () => {
+      sharePicked = [...favorites];
+      $('shareThumbs').replaceChildren(...favorites.map((id) => {
+        const a = byId(id), b = document.createElement('button');
+        b.className = 'pick'; b.dataset.id = id;
+        b.innerHTML = '<img alt=""><span class="tick" aria-hidden="true"><svg class="ic"><use href="#i-check"/></svg></span><small></small>';
+        b.querySelector('img').src = a.thumb;
+        b.querySelector('small').textContent = a.title;
+        b.setAttribute('aria-label', a.title);
+        b.onclick = () => {
+          sharePicked = sharePicked.includes(id) ? sharePicked.filter((x) => x !== id) : [...sharePicked, id];
+          renderSharePicks();
+        };
+        return b;
+      }));
+      $('shareCopy').classList.toggle('hidden', inApp);   // the app's share sheet has its own Copy
+      renderSharePicks();
+      showSheet('share', true);
+    };
+    $('shareAll').onclick = () => { sharePicked = shareIds().length === favorites.length ? [] : [...favorites]; renderSharePicks(); };
+    $('shareClose').onclick = () => showSheet('share', false);
+    async function copyFavLink() {
+      try { await navigator.clipboard.writeText(favLink()); toast('Link copied'); } catch { toast("Couldn't copy the link"); }
+    }
+    $('shareCopy').onclick = copyFavLink;
+    $('shareGo').onclick = async () => {
+      if (!shareIds().length) return;
+      const text = `My favorites from Second Motion: ${shareIds().map((id) => byId(id).title).join(', ')}`, url = favLink();
+      log('sharing favorites');
+      if (inApp) return post('shareLink', { text, url });
+      if (navigator.share) { try { await navigator.share({ title: 'Second Motion', text, url }); } catch {} return; }
+      copyFavLink();
+    };
+    // A shared link (website only): add its favorites and show them first.
+    function importSharedFavorites() {
+      const ids = (params.get('fav') || '').split(',').filter((id) => byId(id));
+      if (!ids.length) return false;
+      favorites = [...new Set([...ids, ...favorites])]; saveFavorites(); renderFavCount();
+      return true;
+    }
+
+    // --- Photo: the camera picture with the animations on top, plus a small label.
+    let ar3 = null, camEl = null, lastPhoto = null;
+    function takePhoto() {
+      if (!ar3 || !camEl) return;
+      const W = innerWidth, H = innerHeight, dpr = Math.min(2, devicePixelRatio || 1);
+      const c = document.createElement('canvas');
+      c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+      const ctx = c.getContext('2d'); ctx.scale(dpr, dpr);
+      try {
+        const vr = camEl.getBoundingClientRect();
+        ctx.drawImage(camEl, vr.left, vr.top, vr.width, vr.height);
+        ar3.renderer.render(ar3.scene, ar3.camera);   // draw now, so the WebGL picture is still there to copy
+        const cr = ar3.renderer.domElement.getBoundingClientRect();
+        ctx.drawImage(ar3.renderer.domElement, cr.left, cr.top, cr.width, cr.height);
+        drawPhotoLabel(ctx, cardArtwork(), H);
+        lastPhoto = c.toDataURL('image/jpeg', 0.9);
+      } catch (e) { log('photo failed: ' + (e?.message || e)); toast("Couldn't take the photo"); return; }
+      showPhoto(null);
+    }
+    let photoFrom = null;   // 'booth' when the photo was taken in the photo booth: Retake goes back there
+    function showPhoto(from) {
+      photoFrom = from;
+      $('flash').classList.add('on'); requestAnimationFrame(() => requestAnimationFrame(() => $('flash').classList.remove('on')));
+      $('photoImg').src = lastPhoto;
+      showPage('photo');
+      log('photo taken' + (from ? ` (${from})` : ''));
+    }
+    function drawPhotoLabel(ctx, a, H) {
+      const brand = 'SECOND MOTION', rest = a ? `  ·  ${a.title}` : '';
+      ctx.font = '600 13px -apple-system, BlinkMacSystemFont, sans-serif';
+      const w1 = ctx.measureText(brand).width, w2 = ctx.measureText(rest).width, x = 16, h = 32, y = H - 24 - h;
+      ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x, y, w1 + w2 + 28, h, 16); else ctx.rect(x, y, w1 + w2 + 28, h);
+      ctx.fill();
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ff6b5a'; ctx.fillText(brand, x + 14, y + h / 2);
+      ctx.fillStyle = '#f5f1ec'; ctx.fillText(rest, x + 14 + w1, y + h / 2);
+    }
+    $('shutter').onclick = takePhoto;
+    $('cardPhoto').onclick = takePhoto;
+    $('photoRetake').onclick = $('photoClose').onclick = () => showPage(photoFrom === 'booth' && booth.on ? 'booth' : null);
+    $('photoShare').onclick = async () => {
+      if (!lastPhoto) return;
+      log('sharing photo');
+      // The app hands the photo to iOS's share sheet (Save Image, Messages, AirDrop…).
+      if (inApp) return post('sharePhoto', { data: lastPhoto.slice(lastPhoto.indexOf(',') + 1) });
+      try {
+        const blob = await (await fetch(lastPhoto)).blob();
+        const file = new File([blob], 'second-motion.jpg', { type: 'image/jpeg' });
+        if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file], title: 'Second Motion' }); return; }
+      } catch (e) { if (e?.name === 'AbortError') return; }
+      const link = document.createElement('a'); link.href = lastPhoto; link.download = 'second-motion.jpg'; link.click();
+    };
+
+
+    // --- Photo booth: a photo with an animation BEHIND the person. Each camera frame is cut into "person" and
+    // "background" by Google's selfie segmentation model (MediaPipe, runs on the device, works offline); the
+    // picture is drawn as background, then the animation, then the person on top.
+    //   Selfie: front camera; the chosen animation fills the background (or sits in a window behind you).
+    //   At the drawing: back camera, for photographing a friend; the same chosen animation plays as a square in the
+    //   middle of the screen behind them. (Pose on the drawing card opens this with that drawing's animation.)
+    const booth = { on: false, mode: 'selfie', a: null, from: null, stream: null, video: null, seg: null,
+      raf: 0, lastSeg: 0, maskReady: false, fill: true, countdown: 0, busy: false, segFails: 0 };
+    const boothCanvas = $('boothCanvas'), bctx = boothCanvas.getContext('2d');
+    const personCanvas = document.createElement('canvas'), pctx = personCanvas.getContext('2d');
+    const segCanvas = document.createElement('canvas'), sctx = segCanvas.getContext('2d', { willReadFrequently: true });
+    const maskCanvas = document.createElement('canvas'), mctx = maskCanvas.getContext('2d');
+    // The cutout's colored border: a hard (not feathered) silhouette, thickened and tinted, drawn just behind
+    // the person so it peeks out past the real edge — a sticker-style outline that also hides any roughness in
+    // the cutout itself. `outlineSrc` is the small, per-frame silhouette; `outlineCanvas` is the full-size,
+    // thickened, colored shape built from it each frame (see boothFrame — cheap, can leave a rough pixel or
+    // two at the edge). `snapBooth` redoes it once for the saved photo, as a traced and rounded vector shape
+    // instead (see drawFlatOutline) — no frame-rate budget to keep to there, so it can afford to be exact.
+    const OUTLINE_PX = 10, OUTLINE_COLOR = '#ff6b5a', OUTLINE_MARGIN_PX = 14;
+    const outlineSrc = document.createElement('canvas'), osctx = outlineSrc.getContext('2d');
+    const outlineCanvas = document.createElement('canvas'), octx = outlineCanvas.getContext('2d');
+    const boothAnim = document.createElement('video');
+    boothAnim.muted = true; boothAnim.loop = true; boothAnim.playsInline = true; boothAnim.setAttribute('webkit-playsinline', '');
+    const animEl = () => boothAnim;
+    let arCam = null;   // set by start(): pause/resume tracking, stop/restart the back camera, pin an animation
+
+    // The segmentation library loads the first time the booth opens (the app bundles it; see
+    // scripts/build-booth-lib.sh). The GPU is tried first, then the CPU.
+    let segmenterP = null;
+    function loadSegmenter() {
+      segmenterP ??= (async () => {
+        if (!window.BoothLib) await new Promise((resolve, reject) => {
+          const sc = document.createElement('script');
+          sc.src = 'booth-lib.js'; sc.onload = resolve; sc.onerror = () => reject(new Error("couldn't load booth-lib.js"));
+          document.head.appendChild(sc);
+        });
+        const fileset = {
+          wasmLoaderPath: new URL('vision_wasm_internal.js', location.href).href,
+          wasmBinaryPath: isLocalFile ? await localBlobUrl('vision_wasm_internal.wasm', 'application/wasm')
+            : new URL('vision_wasm_internal.wasm', location.href).href,
+        };
+        const model = await readBytes('selfie_segmenter.tflite');
+        const make = (delegate) => window.BoothLib.ImageSegmenter.createFromOptions(fileset, {
+          baseOptions: { modelAssetBuffer: model, delegate }, runningMode: 'VIDEO',
+          outputConfidenceMasks: true, outputCategoryMask: false });
+        try { const seg = await make('GPU'); log('booth: segmenter ready (GPU)'); return seg; }
+        catch (e) { log('booth: GPU segmenter failed (' + (e?.message || e) + '), using CPU'); }
+        const seg = await make('CPU'); log('booth: segmenter ready (CPU)'); return seg;
+      })().catch((e) => { segmenterP = null; throw e; });
+      return segmenterP;
+    }
+
+    const setBoothMsg = (t) => { $('boothMsg').textContent = t || ''; };
+    function renderBooth() {
+      const a = booth.a, selfie = booth.mode === 'selfie';
+      $('boothTitle').textContent = a.title;
+      $('boothSelfie').setAttribute('aria-pressed', String(selfie));
+      $('boothDrawing').setAttribute('aria-pressed', String(!selfie));
+      $('boothLook').style.visibility = selfie ? '' : 'hidden';   // keeps its space, so the shutter stays centred
+      $('boothLook').textContent = booth.fill ? 'Full' : 'Window';
+      $('boothLook').setAttribute('aria-label', booth.fill ? 'The animation fills the background. Tap to show it in a window instead.'
+        : 'The animation is in a window behind you. Tap to fill the background instead.');
+      // Every drawing, in order; built once, then only the selected one changes (so the strip keeps its place).
+      const picks = $('boothPicks');
+      if (picks.children.length !== ARTWORKS.length) {
+        picks.textContent = '';
+        for (const x of ARTWORKS) { const b = thumbButton(x, false, () => setBoothArtwork(x)); b.dataset.id = x.id; picks.appendChild(b); }
+      }
+      for (const b of picks.children) b.classList.toggle('on', b.dataset.id === a.id);
+      requestAnimationFrame(() => picks.querySelector('.on')?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }));
+    }
+    function setBoothArtwork(a) {
+      booth.a = a;
+      boothAnim.src = a.video; boothAnim.load();
+      boothAnim.play().catch(() => {});
+      renderBooth();
+    }
+
+    // The booth opens its own camera: the front one for selfies, the back one "at the drawing". The camera view's
+    // camera (MindAR) is stopped first, since phones run one camera at a time; closeBooth restarts it.
+    async function startBoothCamera() {
+      stopSelfieCamera();
+      if (arCam?.cameraLive()) await arCam.stopCamera();
+      booth.stream = await navigator.mediaDevices.getUserMedia({ audio: false,
+        video: { facingMode: booth.mode === 'selfie' ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } });
+      const v = document.createElement('video');
+      v.muted = true; v.playsInline = true; v.setAttribute('webkit-playsinline', ''); v.srcObject = booth.stream;
+      await v.play();
+      booth.video = v;
+    }
+    function stopSelfieCamera() {
+      booth.stream?.getTracks().forEach((t) => t.stop());
+      booth.stream = null; booth.video = null;
+    }
+
+    async function openBooth(a, { mode = 'selfie', from = null } = {}) {
+      if (booth.on || booth.busy) return;
+      booth.busy = true;
+      Object.assign(booth, { on: true, mode, from, a, maskReady: false, segFails: 0, ref: null, hadCamera: cameraOn });
+      if (from === 'viewer') { viewerVideo.pause(); viewerVideo.removeAttribute('src'); viewerVideo.load(); }
+      setBoothArtwork(a);
+      showPage('booth');
+      setBoothMsg('Getting the photo booth ready…');
+      $('boothShutter').disabled = true;
+      booth.raf = requestAnimationFrame(boothFrame);
+      log(`booth: open ${a.title} (${mode})`);
+      try { await startBoothCamera(); }
+      catch (e) {
+        log('booth: camera failed: ' + (e?.name || '') + ' ' + (e?.message || e));
+        setBoothMsg("Couldn't open the camera."); booth.busy = false; return;
+      }
+      try { booth.seg = await loadSegmenter(); }
+      catch (e) {
+        log('booth: segmenter failed: ' + (e?.message || e));
+        booth.seg = null; booth.fill = false; renderBooth();   // no cut-out: show the animation in a window instead
+      }
+      if (!booth.on) { booth.busy = false; return; }
+      $('boothShutter').disabled = false;
+      setBoothMsg(!booth.seg ? "The cut-out isn't available on this device, so the animation shows in a window."
+        : mode === 'selfie' ? 'Step back until your head and shoulders fit, then tap the shutter.'
+        : 'Your friend stands in front of the camera, with the animation behind them.');
+      setTimeout(() => { if (booth.on && /^(Step back|Your friend)/.test($('boothMsg').textContent)) setBoothMsg(''); }, 6000);
+      booth.busy = false;
+    }
+
+    async function closeBooth({ then = 'back' } = {}) {
+      if (!booth.on) return;
+      booth.on = false; cancelAnimationFrame(booth.raf); clearInterval(booth.countdown); $('boothCount').textContent = '';
+      boothAnim.pause(); boothAnim.removeAttribute('src'); boothAnim.load();
+      const { from, a, hadCamera } = booth;
+      stopSelfieCamera();
+      log('booth: closed');
+      if (arCam && hadCamera && !arCam.cameraLive()) { setStatus('Starting camera…'); await arCam.startCamera(); }
+      if (then === 'camera') { showPage(null); if (!cameraOn) startCamera(); return; }
+      if (from === 'favs') openFavs();
+      else if (from === 'viewer') openViewer(a, booth.viewerFrom);
+      else if (cameraOn) showPage(null);
+      else closeToStart();
+    }
+
+    // Size the drawing surface to the screen (capped, so iPads don't push 5 million pixels a frame).
+    let boothScale = 1;
+    function sizeBooth() {
+      boothScale = Math.min(2, devicePixelRatio || 1, 1920 / Math.max(innerWidth, innerHeight));
+      const W = Math.round(innerWidth * boothScale), H = Math.round(innerHeight * boothScale);
+      if (boothCanvas.width !== W || boothCanvas.height !== H) {
+        boothCanvas.width = personCanvas.width = outlineCanvas.width = W;
+        boothCanvas.height = personCanvas.height = outlineCanvas.height = H;
+      }
+      return [W, H];
+    }
+    // Where a picture of size w×h lands when it covers (or fits inside) a box.
+    function fitRect(w, h, bx, by, bw, bh, cover) {
+      const k = (cover ? Math.max : Math.min)(bw / w, bh / h);
+      return [bx + (bw - w * k) / 2, by + (bh - h * k) / 2, w * k, h * k];
+    }
+
+    // The person mask. Only the part of the camera picture that is on screen goes to the model (phone screens
+    // crop the camera's sides), shrunk to 256 px; the mask is scaled back up over that part, which softens its
+    // edge. Confidence 0.42-0.58 fades from background to person — narrow, for as crisp an edge as the small
+    // mask allows. `r` = where the whole camera picture is drawn.
+    function segment(src, r, W, H) {
+      const now = performance.now();
+      if (!booth.seg || now - booth.lastSeg < 33) return;
+      booth.lastSeg = now;
+      const dx = Math.max(0, r[0]), dy = Math.max(0, r[1]), dw = Math.min(W, r[0] + r[2]) - dx, dh = Math.min(H, r[1] + r[3]) - dy;
+      if (dw <= 0 || dh <= 0) return;
+      const fx = src.videoWidth / r[2], fy = src.videoHeight / r[3];
+      const k = 256 / Math.max(dw, dh);
+      const w = Math.max(1, Math.round(dw * k)), h = Math.max(1, Math.round(dh * k));
+      if (segCanvas.width !== w || segCanvas.height !== h) {
+        segCanvas.width = maskCanvas.width = outlineSrc.width = w;
+        segCanvas.height = maskCanvas.height = outlineSrc.height = h; booth.ref = null;
+      }
+      sctx.drawImage(src, (dx - r[0]) * fx, (dy - r[1]) * fy, dw * fx, dh * fy, 0, 0, w, h);
+      booth.maskDest = [dx, dy, dw, dh];
+      try {
+        booth.seg.segmentForVideo(segCanvas, now, (result) => {
+          const masks = result.confidenceMasks || [];
+          if (!masks.length) return;
+          // One mask = person confidence; several (multi-class models) = mask 0 is the background.
+          const m = masks[0].getAsFloat32Array(), invert = masks.length > 1;
+          const img = mctx.createImageData(w, h), d = img.data;
+          const probs = new Float32Array(w * h);
+          for (let i = 0; i < m.length; i++) {
+            let p = invert ? 1 - m[i] : m[i];
+            p = Math.min(1, Math.max(0, (p - 0.42) / 0.16));
+            probs[i] = p;
+            d[i * 4 + 3] = p * p * (3 - 2 * p) * 255;
+          }
+          mctx.putImageData(img, 0, 0);
+          // A second, hard-edged version of the same mask for the colored outline: smoothed a little first so
+          // single noisy pixels don't fray it, then a plain inside/outside cut (no feathering) — a clean shape
+          // to thicken into a flat-color ring (see boothFrame), instead of the soft, speckled edge that made.
+          const smooth = boxBlur(probs, w, h, 2);
+          const edge = osctx.createImageData(w, h), e = edge.data;
+          for (let i = 0; i < w * h; i++) e[i * 4 + 3] = smooth[i] >= 0.5 ? 255 : 0;
+          osctx.putImageData(edge, 0, 0);
+          if (!booth.maskReady) log('booth: first mask');
+          booth.maskReady = true;
+        });
+        booth.segFails = 0;
+      } catch (e) {
+        if (++booth.segFails === 3) { log('booth: segmentation failing: ' + (e?.message || e)); booth.seg = null; booth.fill = false; renderBooth(); }
+      }
+    }
+
+    function boxBlur(src, w, h, rad) {
+      const tmp = new Float32Array(w * h), out = new Float32Array(w * h), n = rad * 2 + 1;
+      for (let y = 0; y < h; y++) {
+        let acc = 0;
+        for (let x = -rad; x <= rad; x++) acc += src[y * w + Math.min(w - 1, Math.max(0, x))];
+        for (let x = 0; x < w; x++) {
+          tmp[y * w + x] = acc / n;
+          acc += src[y * w + Math.min(w - 1, x + rad + 1)] - src[y * w + Math.max(0, x - rad)];
+        }
+      }
+      for (let x = 0; x < w; x++) {
+        let acc = 0;
+        for (let y = -rad; y <= rad; y++) acc += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
+        for (let y = 0; y < h; y++) {
+          out[y * w + x] = acc / n;
+          acc += tmp[Math.min(h - 1, y + rad + 1) * w + x] - tmp[Math.max(0, y - rad) * w + x];
+        }
+      }
+      return out;
+    }
+
+    // The photo's colored outline is traced as a shape instead of just a blurred, re-cut raster (see
+    // drawFlatOutline): grow the silhouette a little, find its outline as a path, then round off its corners.
+    // That works in the shape's own geometry rather than in pixels, so it isn't limited by how blocky the
+    // silhouette looks at the small size the segmentation AI actually sees — unlike a blur, which is only ever
+    // smoothing a blocky original and still shows it at the edges.
+
+    // Grows a 0/1 grid outward by `rad` cells (a separable max filter — a fast way to do it in two passes).
+    function dilateBinary(src, w, h, rad) {
+      if (rad <= 0) return src;
+      const tmp = new Uint8Array(w * h), out = new Uint8Array(w * h);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        let v = 0;
+        for (let dx = -rad; dx <= rad; dx++) { const xx = x + dx; if (xx >= 0 && xx < w && src[y * w + xx]) { v = 1; break; } }
+        tmp[y * w + x] = v;
+      }
+      for (let x = 0; x < w; x++) for (let y = 0; y < h; y++) {
+        let v = 0;
+        for (let dy = -rad; dy <= rad; dy++) { const yy = y + dy; if (yy >= 0 && yy < h && tmp[yy * w + x]) { v = 1; break; } }
+        out[y * w + x] = v;
+      }
+      return out;
+    }
+    // Every boundary in a 0/1 grid (the outer silhouette, and any inner holes, like the gap by a glasses
+    // frame), as closed loops of grid-corner points. Grid edges are matched up by their shared corners, so
+    // there's no ambiguity about which pixel belongs to which shape, even where two shapes meet at a corner.
+    function traceContours(bin, w, h) {
+      const at = (x, y) => (x >= 0 && x < w && y >= 0 && y < h) ? bin[y * w + x] : 0;
+      const starts = new Map(), edgeStart = [], edgeEnd = [];
+      const push = (ax, ay, bx, by) => {
+        const k = ax + ',' + ay, i = edgeEnd.length;
+        edgeStart.push([ax, ay]); edgeEnd.push([bx, by]);
+        if (!starts.has(k)) starts.set(k, []);
+        starts.get(k).push(i);
+      };
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        if (!at(x, y)) continue;
+        if (!at(x, y - 1)) push(x, y, x + 1, y);
+        if (!at(x + 1, y)) push(x + 1, y, x + 1, y + 1);
+        if (!at(x, y + 1)) push(x + 1, y + 1, x, y + 1);
+        if (!at(x - 1, y)) push(x, y + 1, x, y);
+      }
+      const used = new Uint8Array(edgeEnd.length);
+      const contours = [];
+      for (let i = 0; i < edgeEnd.length; i++) {
+        if (used[i]) continue;
+        const pts = [edgeStart[i]];
+        let cur = i, guard = edgeEnd.length + 4;
+        while (!used[cur] && guard-- > 0) {
+          used[cur] = 1;
+          const [ex, ey] = edgeEnd[cur];
+          pts.push([ex, ey]);
+          const opts = starts.get(ex + ',' + ey);
+          let next = -1;
+          if (opts) for (const o of opts) if (!used[o]) { next = o; break; }
+          if (next === -1) break;
+          cur = next;
+        }
+        if (pts.length > 8) contours.push(pts);   // drops single stray pixels and other noise specks
+      }
+      return contours;
+    }
+    // Rounds off a closed polygon's corners (Chaikin's algorithm: each straight run gets cut back a quarter
+    // from each end, a few times over), turning a blocky, stepped outline into a smooth, flowing one.
+    function chaikinClose(pts, iterations) {
+      let p = pts;
+      for (let it = 0; it < iterations; it++) {
+        const out = [], n = p.length;
+        for (let i = 0; i < n; i++) {
+          const [x0, y0] = p[i], [x1, y1] = p[(i + 1) % n];
+          out.push([x0 * 0.75 + x1 * 0.25, y0 * 0.75 + y1 * 0.25]);
+          out.push([x0 * 0.25 + x1 * 0.75, y0 * 0.25 + y1 * 0.75]);
+        }
+        p = out;
+      }
+      return p;
+    }
+    function drawAnimInRect(ctx, x, y, w, h, cover, radius = 0) {
+      const v = animEl();
+      if (v.readyState < 2) return;
+      const [ax, ay, aw, ah] = fitRect(v.videoWidth, v.videoHeight, x, y, w, h, cover);
+      ctx.save();
+      ctx.beginPath();
+      if (radius && ctx.roundRect) ctx.roundRect(x, y, w, h, radius); else ctx.rect(x, y, w, h);
+      ctx.clip();
+      ctx.drawImage(v, ax, ay, aw, ah);
+      ctx.restore();
+    }
+    // Draws the camera picture (or a same-shaped image, like the mask) where the camera picture belongs on
+    // screen: mirrored for the selfie camera, in place otherwise. Shared by the live frame and the one-off,
+    // higher-quality redraw snapBooth does for the saved photo.
+    function drawCamOn(ctx, img, d, selfie, W) {
+      ctx.save();
+      if (selfie) { ctx.translate(W, 0); ctx.scale(-1, 1); }
+      ctx.drawImage(img, d[0], d[1], d[2], d[3]);
+      ctx.restore();
+    }
+
+    function boothFrame() {
+      if (!booth.on) return;
+      booth.raf = requestAnimationFrame(boothFrame);
+      if (openPage !== 'booth') return;
+      const [W, H] = sizeBooth(), s = boothScale, selfie = booth.mode === 'selfie';
+      const src = booth.video;
+      bctx.setTransform(1, 0, 0, 1, 0, 0);
+      bctx.fillStyle = '#000'; bctx.fillRect(0, 0, W, H);
+      if (!src || src.readyState < 2 || !src.videoWidth) return;
+      // The camera picture covers the screen (the selfie mirrored, like a mirror).
+      const r = fitRect(src.videoWidth, src.videoHeight, 0, 0, W, H, true);
+      segment(src, r, W, H);
+      const drawCam = (ctx, img, d = r) => drawCamOn(ctx, img, d, selfie, W);
+      const cutOut = !!booth.seg && booth.maskReady;
+      // 1. Background
+      if (selfie && booth.fill && cutOut) drawAnimInRect(bctx, 0, 0, W, H, true);
+      else {
+        drawCam(bctx, src);
+        if (selfie) {
+          bctx.fillStyle = 'rgba(0,0,0,.28)'; bctx.fillRect(0, 0, W, H);
+          const size = Math.min(W * 0.86, H * 0.5);
+          drawAnimInRect(bctx, (W - size) / 2, H * 0.17, size, size, false, 18 * s);
+        } else {
+          // At the drawing: the animation as a straight square in the middle of the screen.
+          const size = Math.min(W * 0.92, H * 0.6);
+          drawAnimInRect(bctx, (W - size) / 2, (H - size) / 2, size, size, true);
+        }
+      }
+      // 1.5 The colored outline around the person (every mode): draw the silhouette several times in a ring of offsets,
+      // so it forms a thickened, tinted shape peeking out past the real cutout drawn on top of it next.
+      if (cutOut) {
+        octx.clearRect(0, 0, W, H);
+        octx.imageSmoothingEnabled = false;   // keep every pixel fully in or fully out — a flat fill, no soft blend
+        const [mdx, mdy, mdw, mdh] = booth.maskDest, rad = OUTLINE_PX * s, n = 20;
+        for (let k = 0; k < n; k++) {
+          const ang = (k / n) * Math.PI * 2;
+          drawCam(octx, outlineSrc, [mdx + Math.cos(ang) * rad, mdy + Math.sin(ang) * rad, mdw, mdh]);
+        }
+        octx.globalCompositeOperation = 'source-in';
+        octx.fillStyle = OUTLINE_COLOR; octx.fillRect(0, 0, W, H);
+        octx.globalCompositeOperation = 'source-over';
+        bctx.drawImage(outlineCanvas, 0, 0);
+      }
+      // 2. The person, cut out of the camera picture, on top
+      if (cutOut) {
+        pctx.globalCompositeOperation = 'source-over';
+        pctx.clearRect(0, 0, W, H);
+        drawCam(pctx, src);
+        pctx.globalCompositeOperation = 'destination-in';
+        pctx.imageSmoothingEnabled = true; pctx.imageSmoothingQuality = 'high';
+        drawCam(pctx, maskCanvas, booth.maskDest);
+        pctx.globalCompositeOperation = 'source-over';
+        bctx.drawImage(personCanvas, 0, 0);
+      }
+    }
+
+    // The live outline (boothFrame) is cheap on purpose and can leave a rough, stepped edge — the segmentation
+    // AI only ever sees a 256px-wide picture, so its silhouette is naturally blocky at that scale. For the
+    // photo that's actually saved, there's no frame budget to keep to, so redo both edges properly, from the
+    // same traced-and-rounded shape (see traceContours/chaikinClose above): the colored ring is that shape
+    // grown outward a bit; the real photo is clipped to that *same* shape, ungrown, instead of the original
+    // blocky AI mask. Using one shape for both is what makes the inner and outer edges match — a sticker is
+    // die-cut once, not cut twice from two different patterns.
+    function outlineBinary() {
+      const w = outlineSrc.width, h = outlineSrc.height;
+      const data = osctx.getImageData(0, 0, w, h).data;
+      const bin = new Uint8Array(w * h);
+      for (let i = 0; i < w * h; i++) bin[i] = data[i * 4 + 3] > 0 ? 1 : 0;
+      return { w, h, bin };
+    }
+    function smoothContours(bin, w, h, dilateRad) {
+      return traceContours(dilateBinary(bin, w, h, dilateRad), w, h)
+        .map((raw) => chaikinClose(raw.filter((_, i) => i % 2 === 0), 3));
+    }
+    function pathContours(ctx, contours, w, h, mdx, mdy, mdw, mdh) {
+      ctx.beginPath();
+      for (const smooth of contours) {
+        smooth.forEach(([gx, gy], i) => {
+          const x = mdx + (gx / w) * mdw, y = mdy + (gy / h) * mdh;
+          ctx[i ? 'lineTo' : 'moveTo'](x, y);
+        });
+        ctx.closePath();
+      }
+    }
+
+    function snapBooth() {
+      const c = document.createElement('canvas');
+      c.width = boothCanvas.width; c.height = boothCanvas.height;
+      const ctx = c.getContext('2d');
+      try {
+        ctx.drawImage(boothCanvas, 0, 0);
+        const selfie = booth.mode === 'selfie', cutOut = !!booth.seg && booth.maskReady;
+        if (cutOut) {
+          const src = booth.video, W = c.width, H = c.height;
+          const r = fitRect(src.videoWidth, src.videoHeight, 0, 0, W, H, true);
+          const { w, h, bin } = outlineBinary();
+          const [mdx, mdy, mdw, mdh] = booth.maskDest;
+          const marginRad = Math.max(1, Math.round((OUTLINE_MARGIN_PX * s) / (mdw / w)));
+          const outer = smoothContours(bin, w, h, marginRad), inner = smoothContours(bin, w, h, 0);
+          ctx.save();
+          if (selfie) { ctx.translate(W, 0); ctx.scale(-1, 1); }
+          if (outer.length) {
+            pathContours(ctx, outer, w, h, mdx, mdy, mdw, mdh);
+            ctx.fillStyle = OUTLINE_COLOR; ctx.fill('evenodd');
+          }
+          if (inner.length) {
+            pathContours(ctx, inner, w, h, mdx, mdy, mdw, mdh);
+            ctx.clip('evenodd');
+            ctx.drawImage(src, r[0], r[1], r[2], r[3]);
+          }
+          ctx.restore();
+        }
+        ctx.scale(boothScale, boothScale);
+        drawPhotoLabel(ctx, booth.a, c.height / boothScale);
+        lastPhoto = c.toDataURL('image/jpeg', 0.9);
+      } catch (e) { log('booth photo failed: ' + (e?.message || e)); toast("Couldn't take the photo"); return; }
+      showPhoto('booth');
+    }
+    // Selfies count down 3-2-1, so there's time to pose; at the drawing the photographer shoots straight away.
+    $('boothShutter').onclick = () => {
+      if (booth.countdown || $('boothShutter').disabled) return;
+      if (booth.mode !== 'selfie') return snapBooth();
+      let n = 3; $('boothCount').textContent = n;
+      booth.countdown = setInterval(() => {
+        n -= 1;
+        if (n > 0) { $('boothCount').textContent = n; return; }
+        clearInterval(booth.countdown); booth.countdown = 0; $('boothCount').textContent = '';
+        if (booth.on && openPage === 'booth') snapBooth();
+      }, 1000);
+    };
+    $('boothClose').onclick = () => closeBooth();
+    $('boothLook').onclick = () => { booth.fill = !booth.fill; renderBooth(); };
+    // Switch between the front and back camera; the chosen animation stays.
+    async function switchBooth(mode) {
+      if (booth.mode === mode || booth.busy) return;
+      booth.busy = true;
+      clearInterval(booth.countdown); booth.countdown = 0; $('boothCount').textContent = '';
+      Object.assign(booth, { mode, maskReady: false, ref: null });
+      renderBooth();
+      try { await startBoothCamera(); }
+      catch (e) { log('booth: camera failed: ' + (e?.message || e)); setBoothMsg("Couldn't open the camera."); }
+      log(`booth: switched to ${mode}`);
+      booth.busy = false;
+    }
+    $('boothSelfie').onclick = () => switchBooth('selfie');
+    $('boothDrawing').onclick = () => switchBooth('drawing');
+    $('cardPose').onclick = withCard((a) => openBooth(a, { mode: 'drawing' }));
+    $('viewerBooth').onclick = () => {
+      booth.viewerFrom = viewerFrom;
+      openBooth(viewerArtwork, { mode: 'selfie', from: 'viewer' });
+    };
+    $('favBooth').onclick = () => { if (favorites.length) openBooth(byId(favorites[0]), { mode: 'selfie', from: 'favs' }); };
+
+    // --- About this work: an overlay over the camera or the viewer, with written and audio descriptions.
+    let aboutArtwork = null, aboutTrack = 'story', audioSpeed = 1, audioPlaying = false, audioProgress = 0, utterance = null;
+    const SPEEDS = [1, 1.25, 1.5, 0.75];
+    const audioEl = new Audio();
+    audioEl.addEventListener('timeupdate', () => renderAudio());
+    audioEl.addEventListener('ended', () => { audioPlaying = false; renderAudio(); });
+    const trackFile = () => info(aboutArtwork).audio[aboutTrack];
+    function openAbout(a, { listen = false } = {}) {
+      stopAudio(false);
+      aboutArtwork = a; aboutTrack = 'story';
+      const i = info(a);
+      $('aboutKicker').textContent = kicker(a); $('aboutTitle').textContent = a.title;
+      $('aboutImg').src = a.thumb; $('aboutImg').alt = `The ${a.title} drawing`;
+      $('aboutDescribe').textContent = i.describe;
+      $('aboutStory').replaceChildren(...i.story.map((t) => Object.assign(document.createElement('p'), { textContent: t })));
+      $('aboutProcess').replaceChildren(...['DRAWING', 'ANIMATION', 'ON THE SCULPTURE'].map((label, k) => {
+        const step = document.createElement('div'); step.className = 'step';
+        step.innerHTML = k === 0 ? '<img alt="">' : '<div class="ph" aria-hidden="true">[Process photo]</div>';
+        if (k === 0) step.querySelector('img').src = a.thumb;
+        const text = document.createElement('div');
+        text.innerHTML = '<div class="kicker sm"></div><p></p>';
+        text.querySelector('.kicker').textContent = `STEP ${k + 1} · ${label}`;
+        text.querySelector('p').textContent = i.process[k] || '';
+        step.appendChild(text);
+        return step;
+      }));
+      $('aboutDetails').replaceChildren(...[['Artist', i.artist], ['Series', `Communication 101, No. ${a.number}`], ['Medium', i.medium], ['Year', i.year]]
+        .map(([k, v]) => { const row = document.createElement('div'); row.innerHTML = '<dt></dt><dd></dd>';
+          row.firstChild.textContent = k; row.lastChild.textContent = v; return row; }));
+      $('aboutBody').scrollTop = 0;
+      aboutOpen = true; showSheet('about', true); pauseAR(); renderBar();
+      renderAudio();
+      if (listen) playAudio();
+      log(`about ${a.title}`);
+    }
+    function closeAbout() {
+      stopAudio(false);
+      aboutOpen = false; showSheet('about', false); resumeAR(); renderBar();
+    }
+    $('aboutClose').onclick = closeAbout;
+
+    // Overlays (About this work, Share) also close by sliding them down, like iOS sheets; the close button stays.
+    // The drag starts anywhere on the sheet, except inside its scrolling text when that isn't scrolled to the top
+    // (there, a downward swipe scrolls the text). Let go past a quarter of the sheet's height (at most 140 px),
+    // or with a quick flick, and it slides away and closes; otherwise it springs back.
+    function swipeToClose(id, close) {
+      const wrap = $(id), sheet = wrap.querySelector('.sheet'), body = sheet.querySelector('.sheetBody');
+      let y0 = null, t0 = 0, dy = 0, dragging = false;
+      sheet.addEventListener('touchstart', (e) => {
+        y0 = null;
+        if (e.touches.length !== 1 || (body && body.contains(e.target) && body.scrollTop > 0)) return;
+        y0 = e.touches[0].clientY; t0 = performance.now(); dy = 0; dragging = false;
+      }, { passive: true });
+      sheet.addEventListener('touchmove', (e) => {
+        if (y0 === null) return;
+        const d = e.touches[0].clientY - y0;
+        if (!dragging) {
+          if (d < -6) { y0 = null; return; }   // swiping up: let the text scroll
+          if (d < 8) return;
+          dragging = true; sheet.style.transition = 'none';
+        }
+        e.preventDefault();
+        dy = Math.max(0, d);
+        sheet.style.transform = `translateY(${dy}px)`;
+        wrap.style.opacity = String(Math.max(0.35, 1 - dy / (sheet.offsetHeight * 1.5)));
+      }, { passive: false });
+      const end = () => {
+        if (y0 === null || !dragging) { y0 = null; return; }
+        y0 = null; dragging = false;
+        const fast = dy > 24 && dy / Math.max(1, performance.now() - t0) > 0.4;
+        sheet.style.transition = 'transform .22s ease-out'; wrap.style.opacity = '';
+        if (dy > Math.min(140, sheet.offsetHeight * 0.25) || fast) {
+          sheet.style.transform = 'translateY(105%)';
+          setTimeout(close, 180);   // after most of the slide, so pages (hidden at once on close) still show it leaving
+          setTimeout(() => { sheet.style.transform = ''; sheet.style.transition = ''; }, 420);
+        } else {
+          sheet.style.transform = '';
+          setTimeout(() => { sheet.style.transition = ''; }, 230);
+        }
+      };
+      sheet.addEventListener('touchend', end);
+      sheet.addEventListener('touchcancel', end);
+    }
+    swipeToClose('about', closeAbout);
+    swipeToClose('share', () => showSheet('share', false));
+    swipeToClose('project', () => $('projectClose').click());
+
+    function playAudio() {
+      const file = trackFile();
+      if (file) {
+        if (!audioEl.src.endsWith(file)) audioEl.src = file;
+        audioEl.playbackRate = audioSpeed;
+        audioEl.play().catch((e) => log('audio: ' + e.name));
+      } else if ('speechSynthesis' in window) {
+        // No recording yet: the device's voice reads the text (placeholders' brackets aren't read).
+        speechSynthesis.cancel();
+        const i = info(aboutArtwork);
+        const text = (aboutTrack === 'story' ? i.story.join(' ') : i.describe).replace(/[[\]]/g, '');
+        const u = new SpeechSynthesisUtterance(text);
+        u.rate = audioSpeed; u.lang = 'en-US';
+        u.onboundary = (e) => { if (utterance === u) { audioProgress = Math.min(1, e.charIndex / text.length); renderAudio(); } };
+        u.onend = () => { if (utterance === u) { utterance = null; audioPlaying = false; audioProgress = 0; renderAudio(); } };
+        utterance = u; audioProgress = 0;
+        speechSynthesis.speak(u);
+      } else { toast('Audio is not available on this device'); return; }
+      audioPlaying = true; renderAudio();
+    }
+    function pauseAudio() {
+      if (trackFile()) audioEl.pause(); else { utterance = null; try { speechSynthesis.cancel(); } catch {} audioProgress = 0; }
+      audioPlaying = false; renderAudio();
+    }
+    function stopAudio(render = true) {
+      audioEl.pause(); audioEl.removeAttribute('src');
+      utterance = null; try { speechSynthesis.cancel(); } catch {}
+      audioPlaying = false; audioProgress = 0;
+      if (render) renderAudio();
+    }
+    const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+    function renderAudio() {
+      if (!aboutArtwork) return;
+      const story = aboutTrack === 'story', file = trackFile();
+      $('trkStory').setAttribute('aria-pressed', String(story));
+      $('trkDescribe').setAttribute('aria-pressed', String(!story));
+      $('audioTitle').textContent = story ? "The artist's story" : 'What you see';
+      $('audioPlay').querySelector('use').setAttribute('href', audioPlaying ? '#i-pause' : '#i-play');
+      $('audioPlay').setAttribute('aria-label', audioPlaying ? 'Pause' : 'Play');
+      $('audioSpeed').textContent = `${audioSpeed}×`;
+      let p = audioProgress, time = 'Device voice';
+      if (file) { const d = audioEl.duration || 0; p = d ? audioEl.currentTime / d : 0; time = d ? `${fmtTime(audioEl.currentTime)} / ${fmtTime(d)}` : ''; }
+      $('audioTime').textContent = time;
+      $('audioBar').style.width = `${Math.round(p * 100)}%`;
+      $('audioNote').textContent = (story ? 'The artist tells the story below in their own voice.'
+        : 'A spoken description of the drawing and its animation, for blind and low-vision visitors.')
+        + (file ? '' : " The recording isn't ready yet, so your device's voice reads the text for now.");
+    }
+    $('audioPlay').onclick = () => (audioPlaying ? pauseAudio() : playAudio());
+    $('trkStory').onclick = () => { stopAudio(false); aboutTrack = 'story'; renderAudio(); };
+    $('trkDescribe').onclick = () => { stopAudio(false); aboutTrack = 'describe'; renderAudio(); };
+    $('audioSpeed').onclick = () => {
+      audioSpeed = SPEEDS[(SPEEDS.indexOf(audioSpeed) + 1) % SPEEDS.length];
+      audioEl.playbackRate = audioSpeed;
+      if (audioPlaying && !trackFile()) playAudio();   // the device voice can't change speed mid-sentence: restart
+      else renderAudio();
+    };
+
+    // New visitor on a shared iPad: after VISITOR_RESET_MIN minutes with no touches and no drawing in view,
+    // the app clears Favorites and goes back to the camera, so the next visitor starts fresh. Only in the app
+    // (the website runs on visitors' own phones, where favorites should stay). ?visitorReset=<minutes>, 0 = off.
+    let lastActivity = performance.now();
+    for (const ev of ['pointerdown', 'touchstart', 'keydown']) {
+      addEventListener(ev, () => { lastActivity = performance.now(); }, { capture: true, passive: true });
+    }
+    function newVisitor() {
+      if (booth.on) closeBooth();
+      viewerVideo.pause(); viewerVideo.removeAttribute('src'); viewerVideo.load();
+      if (aboutOpen) closeAbout();
+      showSheet('share', false);
+      favorites = []; saveFavorites(); found = []; cardPick = null; lastPhoto = null;
+      renderFavCount(); renderFavs(); showPage(null);
+      log('new visitor: favorites cleared');
+    }
+    if (VISITOR_RESET_MIN > 0) setInterval(() => {
+      const now = performance.now();
+      if (ARTWORKS.some((a) => a.showing) || audioPlaying || (booth.on && booth.maskReady)) lastActivity = now;   // someone is looking or listening
+      if (now - lastActivity < VISITOR_RESET_MIN * 60000) return;
+      lastActivity = now;
+      if (favorites.length || found.length || openPage || aboutOpen) newVisitor();
+    }, 5000);
+
+    // Both the website and the app (which shows this same page from the website) load files by relative URL.
+    async function start() {
+      cameraStarting = true;
+      setStatus('Loading artwork…');
+      const targetUrl = isLocalFile ? await localBlobUrl('targets.mind') : 'targets.mind';
+
+      setStatus('Starting camera…');
+      const mindar = new MindARThree({
+        container: $('ar'),
+        imageTargetSrc: targetUrl,
+        uiLoading: 'no', uiScanning: 'no', uiError: 'no',
+        filterMinCF: 0.0001, filterBeta: 0.001,   // smoothing: less jitter, a bit more lag
+        missTolerance: 5, warmupTolerance: 3,
+        // Track every artwork at once, so several drawings in view each play their own video. Each extra
+        // tracked drawing costs phone CPU; lower with ?maxTrack=1 if older phones struggle.
+        maxTrack: Math.max(1, Math.min(ARTWORKS.length, num('maxTrack', ARTWORKS.length))),
+      });
+      const { renderer, scene, camera } = mindar;
+      ar3 = { renderer, scene, camera };
+
+      for (const a of ARTWORKS) {
+        const texture = new THREE.VideoTexture(a.el);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        a.material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
+        a.plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), a.material);
+        applyOverlay(a);
+
+        const anchor = mindar.addAnchor(a.target);
+        anchor.group.add(a.plane);
+        a.group = anchor.group;
+        anchor.onTargetFound = () => {
+          a.tracking = true;
+          active = a; syncSliders();
+          showTrackingStatus(); log(`target found: ${a.name}`); post('target', { found: true, name: a.name });
+          loadVideo(a);   // start downloading now; it plays once the whole drawing is in view
+        };
+        anchor.onTargetLost = () => {
+          a.tracking = false; a.lostAt = performance.now();
+          setShowing(a, false);
+          log(`target lost: ${a.name}`); post('target', { found: false, name: a.name });
+          showTrackingStatus();
+        };
+      }
+
+      try {
+        await mindar.start();
+      } catch (e) {
+        setStatus('Camera unavailable', 'err');
+        log('camera error: ' + (e?.name || '') + ' ' + (e?.message || e));
+        return false;
+      }
+      // MindAR's camera <video> sets the "muted" attribute but not the property, so strict autoplay
+      // policies can leave it paused (black screen). Mute it properly and make sure it's playing.
+      async function adoptCameraVideo() {
+        const camVideo = [...$('ar').querySelectorAll('video')].find((v) => v.srcObject);
+        camEl = camVideo;
+        if (camVideo) {
+          camVideo.muted = true;
+          if (camVideo.paused) await camVideo.play().catch((e) => log('camera video play: ' + e.name));
+        }
+      }
+      await adoptCameraVideo();
+      setStatus('Point the camera at the image');
+      log(`camera started (${inApp ? 'in app' : 'browser'})`);
+      $('bar').classList.remove('hidden');
+      cameraOn = true; cameraStarting = false; renderBar();
+
+      // Tap an animation in the camera view to watch it full screen.
+      const raycaster = new THREE.Raycaster(), ndc = new THREE.Vector2();
+      $('ar').addEventListener('click', (e) => {
+        const r = renderer.domElement.getBoundingClientRect();   // MindAR sizes the canvas to cover the screen
+        ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+        scene.updateMatrixWorld();
+        raycaster.setFromCamera(ndc, camera);
+        const planes = ARTWORKS.filter((a) => a.showing && a.plane?.visible).map((a) => a.plane);
+        const hit = raycaster.intersectObjects(planes, false)[0];
+        if (hit) openViewer(ARTWORKS.find((a) => a.plane === hit.object));
+      });
+      if (debugMode) { window.__mindar = mindar; window.__booth = booth; window.__boothAnim = boothAnim; }
+
+      // Watchdog. MindAR's tracking loop waits on a background worker and the GPU; if the phone kills either
+      // (low memory), the loop stops silently while the camera picture keeps running. If no frame has been
+      // processed for STALL_MS, restart tracking on the same camera; if that keeps happening, reload the page.
+      const STALL_MS = num('stall', 3000);
+      let lastProcessed = performance.now(), restarting = false, lastRestart = -Infinity;
+      let trackingPaused = false, cameraLive = true;
+      const loseAll = () => {
+        for (const anchor of mindar.anchors) {
+          if (anchor.visible) { anchor.visible = false; anchor.group.visible = false; anchor.onTargetLost?.(); }
+        }
+      };
+      // The photo booth's handle on the camera view.
+      arCam = {
+        cameraLive: () => cameraLive,
+        // Pin an animation: its four corners on screen right now, in CSS pixels.
+        pin(a) {
+          const rect = renderer.domElement.getBoundingClientRect();
+          a.plane.updateWorldMatrix(true, false);
+          return CORNERS.map(([x, y]) => {
+            _corner.set(x, y, 0).applyMatrix4(a.plane.matrixWorld).project(camera);
+            return [rect.left + (_corner.x + 1) / 2 * rect.width, rect.top + (1 - _corner.y) / 2 * rect.height];
+          });
+        },
+        pauseTracking() { trackingPaused = true; try { mindar.controller.stopProcessVideo(); } catch {} },
+        resumeTracking() {
+          if (!trackingPaused || !cameraLive) return;
+          trackingPaused = false; lastProcessed = performance.now();
+          try { mindar.controller.processVideo(mindar.video); } catch (e) { log('resume tracking: ' + (e?.message || e)); }
+        },
+        async stopCamera() {
+          trackingPaused = true; cameraLive = false;
+          try { mindar.controller.stopProcessVideo(); mindar.controller.worker?.terminate(); } catch {}
+          loseAll();
+          try { mindar.stop(); } catch (e) { log('camera stop: ' + (e?.message || e)); }
+          camEl = null;
+          log('back camera stopped');
+        },
+        async startCamera() {
+          try {
+            await mindar.start();
+            hookController(); await adoptCameraVideo();
+            cameraLive = true; trackingPaused = false; lastProcessed = performance.now();
+            setStatus('Point the camera at the image');
+            log('back camera restarted');
+          } catch (e) { log('camera restart failed: ' + (e?.message || e)); reloadAndResume('camera restart failed'); }
+        },
+      };
+      const hookController = () => {
+        const c = mindar.controller, orig = c.onUpdate;
+        c.onUpdate = (d) => { if (d.type === 'processDone') lastProcessed = performance.now(); orig(d); };
+      };
+      hookController();
+      async function restartTracking(reason) {
+        if (restarting) return;
+        if (performance.now() - lastRestart < 30000) return reloadAndResume(reason + ', again');
+        restarting = true; lastRestart = performance.now();
+        log(`tracking stopped (${reason}); restarting`);
+        const old = mindar.controller;
+        try { old.stopProcessVideo(); old.worker?.terminate(); } catch {}
+        for (const anchor of mindar.anchors) {
+          if (anchor.visible) { anchor.visible = false; anchor.group.visible = false; anchor.onTargetLost?.(); }
+        }
+        try {
+          await mindar._startAR();
+          hookController(); lastProcessed = performance.now();
+          log('tracking restarted');
+        } catch (e) { log('restart failed: ' + (e?.message || e)); reloadAndResume('restart failed'); }
+        restarting = false;
+      }
+      setInterval(() => {
+        const now = performance.now();
+        unloadIdleVideos(now);
+        renderBar();   // the card lingers a moment after its drawing leaves the screen
+        if (document.hidden || restarting || trackingPaused) { lastProcessed = now; return; }
+        if (now - lastProcessed > STALL_MS) restartTracking(`no frame for ${Math.round((now - lastProcessed) / 1000)} s`);
+      }, 1000);
+      renderer.domElement.addEventListener('webglcontextlost', () => reloadAndResume('graphics context lost'));
+
+      let frames = 0, last = performance.now();
+      renderer.setAnimationLoop(() => {
+        const t = performance.now();
+        const rect = renderer.domElement.getBoundingClientRect();
+        for (const a of ARTWORKS) {
+          updateOrientation(a, camera, t);
+          if (a.tracking) setShowing(a, isFullyInView(a, camera, rect));
+          updateFade(a);
+        }
+        renderer.render(scene, camera);
+        frames++;
+        const now = performance.now();
+        if (now - last > 1000) {
+          const seen = ARTWORKS.filter((a) => a.tracking).map((a) => `${a.name}${a.showing ? '' : ' [partial]'} (tilt ${a.tilt?.toFixed(0)}°, square ${Math.round((a.squareWeight ?? 0) * 100)}%)`).join(', ') || 'none';
+          $('stats').textContent = `fps ${Math.round(frames * 1000 / (now - last))} · tracking ${seen} · ${active.video} ${active.el.paused ? 'paused' : 'playing'} ${active.el.currentTime.toFixed(1)}s`;
+          frames = 0; last = now;
+        }
+      });
+
+      document.addEventListener('visibilitychange', () => {
+        for (const a of ARTWORKS) { if (document.hidden) a.el.pause(); else if (a.showing && !coveredView()) playVideo(a); }
+      });
+    }
+
+    const fail = (e) => { setStatus('Failed to start', 'err'); log('start failed: ' + (e?.message || e)); };
+
+    // Last resort: reload and go straight back to the camera (no start screen). At most 3 times in 2 minutes,
+    // so a phone that keeps failing ends on an error instead of reloading forever.
+    function reloadAndResume(reason) {
+      log('reloading: ' + reason);
+      let times = [];
+      try { times = JSON.parse(sessionStorage.getItem('arReloads') || '[]').filter((t) => Date.now() - t < 120000); } catch {}
+      if (times.length >= 3) { setStatus('Something went wrong. Reload the page to try again.', 'err'); return; }
+      try { sessionStorage.setItem('arReloads', JSON.stringify([...times, Date.now()])); } catch {}
+      const u = new URL(location.href); u.searchParams.set('resume', '1'); location.replace(u);
+    }
+
+    // --- Browser (QR code) flow: start screen -> camera prompt -> AR. Help screen if the camera is unavailable.
+    const ua = navigator.userAgent;
+    const isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const inAppBrowser = /Instagram|FBAN|FBAV|Line\/|KAKAOTALK|NAVER|Snapchat|Twitter|LinkedInApp|WeChat|MicroMessenger/i.test(ua);
+
+    function showHelp(kind) {
+      const browser = isIOS ? 'Safari' : 'Chrome';
+      const texts = {
+        denied: ['Camera access is off', isIOS
+          ? 'This experience needs your camera. In Safari, tap the "aA" button in the address bar → Website Settings → Camera → Allow, then tap Try again.'
+          : 'This experience needs your camera. Tap the icon to the left of the address bar → Permissions → Camera → Allow, then tap Try again.'],
+        unsupported: ["This browser can't use the camera", `Open this page in ${browser}: tap Copy link, open ${browser}, and paste it into the address bar.`],
+        busy: ['The camera is busy', 'Another app may be using the camera. Close it, then tap Try again.'],
+        other: ["Couldn't start the camera", `Tap Try again. If it still doesn't work, open this page in ${browser}.`],
+      };
+      const [title, text] = texts[kind] || texts.other;
+      $('helpTitle').textContent = title; $('helpText').textContent = text;
+      $('start').classList.remove('show'); $('help').classList.add('show');
+      $('status').classList.add('hidden');
+    }
+    $('retryBtn').onclick = () => location.reload();
+    $('copyBtn').onclick = async () => {
+      try { await navigator.clipboard.writeText(location.href); $('copyBtn').textContent = 'Link copied'; }
+      catch { prompt('Copy this link:', location.href); }
+    };
+
+    async function startFromTap() {
+      // Unlock video playback while we still have the user's tap (iOS needs this for later, especially if sound is added).
+      if (!navigator.mediaDevices?.getUserMedia) return showHelp('unsupported');
+      // Ask for the camera ourselves first so we can tell *why* it failed (MindAR swallows the reason).
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        stream.getTracks().forEach((t) => t.stop());
+      } catch (e) {
+        log('getUserMedia: ' + e.name);
+        return showHelp(e.name === 'NotAllowedError' || e.name === 'SecurityError' ? 'denied'
+          : e.name === 'NotReadableError' ? 'busy'
+          : e.name === 'NotFoundError' || e.name === 'OverconstrainedError' ? 'unsupported' : 'other');
+      }
+      $('start').classList.remove('show');
+      $('status').classList.remove('hidden');
+      start().then((ok) => { if (ok === false) showHelp('other'); }).catch(fail);
+    }
+
+    // Start the camera from a page that was opened first (Favorites, About the project).
+    function startCamera() {
+      if (cameraOn || cameraStarting) return;
+      if (inApp) { cameraStarting = true; start().catch(fail); }
+      else startFromTap();
+    }
+    $('startFavs').onclick = () => { $('start').classList.remove('show'); openFavs(); };
+    $('startProject').onclick = openProject;
+    // The app's landing screen can open Favorites or About the project directly, without the camera.
+    const initialPage = window.__initialPage || params.get('page') || '';
+
+    if (inApp) {
+      if (initialPage === 'favs') { openFavs(); post('ready'); }
+      else if (initialPage === 'project') { openProject(); post('ready'); }
+      else start().catch(fail);
+    } else {
+      fetch('targets.mind').catch(() => {});   // warm the tracking file while the visitor reads the start screen
+      $('status').classList.add('hidden');
+      if (inAppBrowser) $('inAppNote').classList.remove('hidden');
+      $('startBtn').onclick = startFromTap;
+      if (params.has('resume')) {   // came back from an automatic reload: skip the start screen
+        const u = new URL(location.href); u.searchParams.delete('resume'); history.replaceState(null, '', u);
+        startFromTap();
+      } else if (importSharedFavorites()) openFavs();   // opened from a shared favorites link
+      else $('start').classList.add('show');
+    }
+  </script>
+</body>
+</html>
